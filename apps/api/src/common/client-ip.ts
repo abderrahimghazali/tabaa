@@ -1,8 +1,10 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { env } from '../env.js';
 
-const digest = (s: string) => createHash('sha256').update(s).digest();
+// Keyed digest only to give timingSafeEqual equal-length inputs; the key never leaves the process.
+const key = randomBytes(32);
+const digest = (s: string) => createHmac('sha256', key).update(s).digest();
 
 // X-Client-IP is only believed from the web server, which proves itself with the shared token.
 export function resolveClientIp(req: { headers: Record<string, unknown>; socket: { remoteAddress?: string } }) {
