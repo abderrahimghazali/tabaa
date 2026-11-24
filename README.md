@@ -156,7 +156,7 @@ flowchart TB
 
 | Couche | Choix |
 |---|---|
-| Interface | Next.js, React, Tailwind CSS, composants [BoardUI](https://www.boardui.com) |
+| Interface | Next.js, React, Tailwind CSS, React Aria |
 | API | NestJS, validation par schémas Zod partagés |
 | Données | PostgreSQL, Drizzle ORM, sécurité au niveau des lignes |
 | Domaine | TypeScript pur, testé avec Vitest |
@@ -254,4 +254,4 @@ Tabaa est distribué sous licence [GNU Affero General Public License v3.0](LICEN
 
 Copyright © 2026 Abderrahim Ghazali.
 
-Les composants d'interface proviennent de BoardUI et restent soumis à leur propre licence.
+Les notices des composants tiers sont dans [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
