@@ -1,5 +1,5 @@
 // Regulatory values are data with an effective date, never constants in logic.
-// Values below come from SPEC-MAROC.md section 2 and are marked [V] there:
+// Values below are unverified against the official texts:
 // confirm with an expert-comptable before production use.
 export interface RulePackage {
   id: string;

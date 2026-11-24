@@ -90,8 +90,6 @@ Tabaa (طابع, « le cachet ») est un logiciel de facturation pensé pour cet
 | Conservation dix ans | CGI art. 211 | Prévu (archivage scellé) |
 | Transmission à la plateforme DGI | CGI art. 145-IX | En attente des spécifications |
 
-Le détail, avec le niveau de certitude de chaque règle et les points à vérifier, est dans [`SPEC-MAROC.md`](SPEC-MAROC.md).
-
 ### Le circuit visé par la réforme
 
 Ce schéma décrit le fonctionnement annoncé. Il reste à confirmer par les textes.
@@ -238,7 +236,7 @@ Non. Il prépare et structure les données ; les règles fiscales appliquées do
 
 Tabaa is an e-invoicing application for Morocco. It issues invoices that carry the Moroccan mandatory mentions (ICE, IF, RC, VAT), locks them once issued, tracks payments (Moroccan VAT is due on receipt), exports UBL 2.1, and runs in French and Arabic with right-to-left layout.
 
-Morocco's e-invoicing mandate has a legal basis but its implementing decree and technical specifications are not yet published. Tabaa is **not connected to the tax administration's platform and holds no state approval**; the DGI connector will be written when the specification is released. See [`SPEC-MAROC.md`](SPEC-MAROC.md) for the full technical specification and the list of points still to verify.
+Morocco's e-invoicing mandate has a legal basis but its implementing decree and technical specifications are not yet published. Tabaa is **not connected to the tax administration's platform and holds no state approval**; the DGI connector will be written when the specification is released.
 
 ## العربية
 
@@ -252,4 +250,8 @@ Le logo, ses variantes et l'animation de chargement sont dans [`brand/`](brand/)
 
 ## Licence
 
-Aucune licence n'est encore définie pour ce dépôt. Les composants d'interface proviennent de BoardUI et restent soumis à leur propre licence.
+Tabaa est distribué sous licence [GNU Affero General Public License v3.0](LICENSE). Vous pouvez l'utiliser, le modifier et le redistribuer ; si vous exploitez une version modifiée comme service en ligne, vous devez en publier le code source sous la même licence.
+
+Copyright © 2026 Abderrahim Ghazali.
+
+Les composants d'interface proviennent de BoardUI et restent soumis à leur propre licence.
