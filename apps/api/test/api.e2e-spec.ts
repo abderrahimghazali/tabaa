@@ -3,13 +3,17 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { Pool } from 'pg';
 import { Logger } from '@nestjs/common';
+import { createHmac } from 'node:crypto';
+import { InMemoryMailTransport, MailTransport } from '@nestjs/mail';
 
 const { AppModule } = await import('../src/app.module.js');
 const { setup } = await import('../src/setup.js');
 const { Dashboard } = await import('@facture/core');
 const { Decimal } = await import('decimal.js');
 const { env, parseEnv } = await import('../src/env.js');
-const { PasswordResetMailer } = await import('../src/auth/auth.service.js');
+const { AuthService } = await import('../src/auth/auth.service.js');
+const { RetentionService } = await import('../src/retention/retention.service.js');
+const { clock } = await import('../src/common/clock.js');
 const policy = await import('../src/auth/security-policy.js');
 const { AuditEvent } = await import('@facture/core');
 const { execFileSync } = await import('node:child_process');
@@ -42,14 +46,53 @@ let customerId: string;
 let anon: ReturnType<typeof request>;
 let TENANT: string;
 let meUser: { id: string };
+let transport: InMemoryMailTransport;
 const tenantIds: string[] = [];
 const PASSWORD = 'correct-horse-battery';
 const uniqueEmail = (tag: string) => `${tag}-${Math.random().toString(36).slice(2, 10)}@example.test`;
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const mailsTo = (email: string) => transport.mails.filter((m) => m.to.some((a) => a.address === email.toLowerCase()));
+
+const waitMail = async (email: string, subject: string) => {
+  for (let i = 0; i < 100; i++) {
+    const m = mailsTo(email).filter((x) => x.subject.includes(subject)).at(-1);
+    if (m) return m;
+    await sleep(30);
+  }
+  throw new Error(`No mail "${subject}" for ${email}`);
+};
+
+const tokenOf = (mail: { links: string[] }) =>
+  new URL(mail.links.find((l) => l.includes('token='))!).searchParams.get('token')!;
+
+// Sign-up now needs the emailed link: this goes through both steps and returns the verification response.
 const signUp = async (agent: ReturnType<typeof request>, email = uniqueEmail('owner'), password = PASSWORD) => {
   const res = await agent.post('/v1/auth/sign-up').send({ name: 'Test User', email, password, companyName: 'Société Test' });
-  if (res.status === 201) tenantIds.push(res.body.tenant.id);
-  return res;
+  if (res.status !== 202) return res;
+  const mail = await waitMail(email, 'Confirmez');
+  const verified = await agent.post('/v1/auth/verify-email').send({ token: tokenOf(mail) });
+  if (verified.status === 201) tenantIds.push(verified.body.tenant.id);
+  return verified;
+};
+
+const base32 = (s: string) => {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const c of s.replace(/=+$/, '')) bits += alphabet.indexOf(c).toString(2).padStart(5, '0');
+  return Buffer.from(bits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
+};
+
+// RFC 6238, SHA-1, 6 digits, 30 s, at the app's (shiftable) clock.
+const totp = (secret: string, stepOffset = 0) => {
+  const counter = Math.floor(clock.now() / 1000 / 30) + stepOffset;
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64BE(BigInt(counter));
+  const h = createHmac('sha1', base32(secret)).update(buf).digest();
+  const o = h[19] & 0xf;
+  const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 1_000_000).padStart(6, '0');
 };
 
 const draft = async (body: Record<string, unknown> = {}) =>
@@ -61,6 +104,7 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication();
   setup(app);
   await app.init();
+  transport = app.get(MailTransport) as InMemoryMailTransport;
   anon = request(app.getHttpServer()) as never;
   http = request.agent(app.getHttpServer()) as never;
   const me = await signUp(http);
@@ -105,14 +149,6 @@ describe('auth', () => {
     await anon.delete('/v1/payments/00000000-0000-4000-8000-000000000000').expect(401);
   });
 
-  it('rejects a duplicate email', async () => {
-    const email = uniqueEmail('dup');
-    await signUp(request(app.getHttpServer()) as never, email);
-    const res = await signUp(request(app.getHttpServer()) as never, email.toUpperCase());
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('EMAIL_TAKEN');
-  });
-
   it('rejects weak passwords and the email as password', async () => {
     await signUp(anon, uniqueEmail('weak'), 'short').then((r) => expect(r.status).toBe(422));
     const email = uniqueEmail('same');
@@ -136,7 +172,7 @@ describe('auth', () => {
     const ok = await anon.post('/v1/auth/sign-in').send({ email, password: PASSWORD }).expect(200);
     expect(ok.body.user.email).toBe(email);
     const statuses: number[] = [];
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 30; i++) {
       statuses.push((await anon.post('/v1/auth/sign-in').send({ email, password: 'bad-password-1' })).status);
     }
     expect(statuses).toContain(429);
@@ -160,19 +196,11 @@ describe('auth', () => {
     const res = await signUp(agent as never, email);
     const cookie = (res.headers['set-cookie'] as unknown as string[])[0].split(';')[0];
 
-    const send = vi.spyOn(PasswordResetMailer.prototype, 'send');
-    const logged = vi.spyOn(Logger.prototype, 'log');
     await anon.post('/v1/auth/password/forgot').send({ email }).expect(204);
     await anon.post('/v1/auth/password/forgot').send({ email: uniqueEmail('nobody') }).expect(204);
-    for (let i = 0; i < 40 && !send.mock.calls.some(([l]) => l.email === email); i++) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    const link = send.mock.calls.map(([l]) => l).find((l) => l.email === email)!;
-    expect(logged.mock.calls.some(([m]) => String(m).includes('Password reset link'))).toBe(false);
-    send.mockRestore();
-    logged.mockRestore();
-    const token = new URL(link.url).searchParams.get('token')!;
-    expect(link.url).toContain('/reinitialiser?token=');
+    const mail = await waitMail(email, 'Réinitialisation');
+    const token = tokenOf(mail);
+    expect(mail.links.some((l) => l.includes('/reinitialiser?token='))).toBe(true);
 
     const newPassword = 'another-long-password';
     await anon.post('/v1/auth/password/reset').send({ token, password: newPassword }).expect(204);
@@ -182,6 +210,7 @@ describe('auth', () => {
     expect((await anon.get('/v1/me').set('Cookie', cookie)).status).toBe(401);
     await anon.post('/v1/auth/sign-in').send({ email, password: PASSWORD }).expect(401);
     await anon.post('/v1/auth/sign-in').send({ email, password: newPassword }).expect(200);
+    await waitMail(email, 'mot de passe a été modifié');
   });
 
   it('isolates tenants through real sessions', async () => {
@@ -424,6 +453,9 @@ describe('security: configuration', () => {
     AUTH_DATABASE_URL: 'postgres://a:b@localhost:5433/x',
     WEB_URL: 'http://localhost:3100',
     INTERNAL_API_TOKEN: 'x'.repeat(32),
+    SMTP_URL: 'smtp://mail.example.com:587',
+    MAIL_FROM: 'Tabaa <no-reply@example.com>',
+    MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   };
 
   it('refuses to boot when required variables are missing', () => {
@@ -434,12 +466,18 @@ describe('security: configuration', () => {
     }
   });
 
+  it('refuses production with localhost SMTP or without Redis', () => {
+    const prod = { ...valid, NODE_ENV: 'production', REDIS_URL: 'redis://redis.example.com:6379' };
+    expect(() => parseEnv(prod)).not.toThrow();
+    expect(() => parseEnv({ ...prod, SMTP_URL: 'smtp://localhost:1125' })).toThrow(/SMTP_URL/);
+    expect(() => parseEnv({ ...prod, REDIS_URL: undefined })).toThrow(/REDIS_URL/);
+    expect(() => parseEnv({ ...valid, MFA_ENCRYPTION_KEY: 'short' })).toThrow(/MFA_ENCRYPTION_KEY/);
+    expect(parseEnv({ ...valid, REDIS_URL: undefined }).redisUrl).toBeUndefined();
+  });
+
   it('is secure unless explicitly relaxed', () => {
     expect(policy.cookieSecure('production')).toBe(true);
     expect(policy.cookieSecure('development')).toBe(false);
-    expect(policy.logResetLinks('production')).toBe(false);
-    expect(policy.logResetLinks('test')).toBe(false);
-    expect(policy.logResetLinks('development')).toBe(true);
     expect(policy.scryptLogN('production')).toBe(17);
     expect(policy.scryptLogN('development')).toBe(17);
     expect(policy.scryptLogN('test')).toBeLessThan(17);
@@ -464,7 +502,12 @@ describe('security: configuration', () => {
   it('refuses to seed outside development', () => {
     const run = () =>
       execFileSync('pnpm', ['exec', 'tsx', 'src/seed.ts'], {
-        env: { ...process.env, NODE_ENV: 'production' },
+        env: {
+          ...process.env,
+          NODE_ENV: 'production',
+          SMTP_URL: 'smtp://mail.example.com:587',
+          REDIS_URL: 'redis://redis.example.com:6379',
+        },
         stdio: 'pipe',
       });
     expect(run).toThrow(/Refusing to run/);
@@ -720,5 +763,332 @@ describe('row-level security guard', () => {
         policies: true,
       });
     }
+  });
+});
+
+describe('accounts: sign-up and email verification', () => {
+  const body = (email: string, extra = {}) => ({ name: 'Nadia', email, password: PASSWORD, companyName: 'Atelier Nadia', ...extra });
+  const userCount = async (email: string) =>
+    (await admin.query('select count(*)::int as n from users where email = $1', [email.toLowerCase()])).rows[0].n;
+  const pendingCount = async (email: string) =>
+    (await admin.query('select count(*)::int as n from pending_signups where email = $1', [email.toLowerCase()])).rows[0].n;
+
+  it('answers new and existing emails identically and creates nothing until verification', async () => {
+    const fresh = uniqueEmail('fresh');
+    const a = await anon.post('/v1/auth/sign-up').send(body(fresh));
+    expect(a.status).toBe(202);
+    expect(a.headers['set-cookie']).toBeUndefined();
+    expect(await userCount(fresh)).toBe(0);
+    expect(await pendingCount(fresh)).toBe(1);
+
+    const existing = request.agent(app.getHttpServer());
+    const owner = await signUp(existing as never);
+    const b = await anon.post('/v1/auth/sign-up').send(body(owner.body.user.email));
+    expect(b.status).toBe(202);
+    expect(b.body).toEqual(a.body);
+    expect(b.headers['set-cookie']).toBeUndefined();
+    expect(await pendingCount(owner.body.user.email)).toBe(0);
+    const notice = await waitMail(owner.body.user.email, 'existe déjà');
+    expect(notice.text).toContain('حساب');
+    expect(notice.links.some((l) => l.endsWith('/connexion'))).toBe(true);
+  });
+
+  it('sends a bilingual verification mail without remote content', async () => {
+    const email = uniqueEmail('mail');
+    await anon.post('/v1/auth/sign-up').send(body(email)).expect(202);
+    const mail = await waitMail(email, 'Confirmez');
+    expect(mail.html).toContain('dir="rtl"');
+    expect(mail.html).not.toMatch(/<img|<script|src=/i);
+    expect(mail.text).toContain('Confirmer mon adresse');
+    expect(mail.text).toContain('تأكيد');
+    expect(mail.links[0]).toContain('/verification?token=');
+  });
+
+  it('verifies once, signs in, and a second request replaces the pending one', async () => {
+    const email = uniqueEmail('verify');
+    await anon.post('/v1/auth/sign-up').send(body(email)).expect(202);
+    const first = tokenOf(await waitMail(email, 'Confirmez'));
+    transport.clear();
+    await anon.post('/v1/auth/sign-up').send(body(email, { name: 'Autre' })).expect(202);
+    const second = tokenOf(await waitMail(email, 'Confirmez'));
+    expect(second).not.toBe(first);
+    expect(await pendingCount(email)).toBe(1);
+    await anon.post('/v1/auth/verify-email').send({ token: first }).expect(422);
+
+    const agent = request.agent(app.getHttpServer());
+    const ok = await agent.post('/v1/auth/verify-email').send({ token: second }).expect(201);
+    tenantIds.push(ok.body.tenant.id);
+    expect(ok.body).toMatchObject({ role: 'OWNER', mfaEnabled: false, user: { name: 'Autre', email } });
+    expect((ok.headers['set-cookie'] as unknown as string[]).join(';')).toContain('tabaa_session=');
+    await agent.get('/v1/me').expect(200);
+    const again = await anon.post('/v1/auth/verify-email').send({ token: second });
+    expect(again.status).toBe(422);
+    expect(again.body.code).toBe('INVALID_TOKEN');
+    expect(await pendingCount(email)).toBe(0);
+  });
+
+  it('rejects expired verification links', async () => {
+    const email = uniqueEmail('expired');
+    await anon.post('/v1/auth/sign-up').send(body(email)).expect(202);
+    const token = tokenOf(await waitMail(email, 'Confirmez'));
+    await admin.query("update pending_signups set expires_at = now() - interval '1 minute' where email = $1", [email]);
+    await anon.post('/v1/auth/verify-email').send({ token }).expect(422);
+  });
+
+  it('does not log tokens when a send fails', async () => {
+    const email = uniqueEmail('failing');
+    const warnings: string[] = [];
+    const spy = vi.spyOn(Logger.prototype, 'warn').mockImplementation((m: unknown) => void warnings.push(String(m)));
+    transport.failNext(new Error('smtp down'));
+    transport.failNext(new Error('smtp down'));
+    transport.failNext(new Error('smtp down'));
+    await anon.post('/v1/auth/sign-up').send(body(email)).expect(202);
+    for (let i = 0; i < 200 && !warnings.some((w) => w.includes('verifyEmail')); i++) await sleep(50);
+    spy.mockRestore();
+    const line = warnings.find((w) => w.includes('verifyEmail'))!;
+    expect(line).toBeDefined();
+    expect(line).not.toContain(email);
+    expect(line).not.toMatch(/token=/);
+  });
+});
+
+describe('accounts: two-factor', () => {
+  const enrolled = async () => {
+    const agent = request.agent(app.getHttpServer());
+    const res = await signUp(agent as never);
+    const email = res.body.user.email as string;
+    const setup = (await agent.post('/v1/auth/mfa/setup').expect(201)).body;
+    expect(setup.otpauthUrl).toMatch(/^otpauth:\/\/totp\/Tabaa:.+issuer=Tabaa/);
+    expect(decodeURIComponent(setup.otpauthUrl)).toContain(email);
+    return { agent, email, secret: setup.secret as string, tenant: res.body.tenant.id as string };
+  };
+  const enable = async (u: Awaited<ReturnType<typeof enrolled>>) => {
+    await u.agent.post('/v1/auth/mfa/enable').send({ code: '000000' }).expect(401);
+    clock.offsetMs -= 30_000;
+    const res = await u.agent.post('/v1/auth/mfa/enable').send({ code: totp(u.secret) }).expect(200);
+    clock.offsetMs += 30_000;
+    return res.body.recoveryCodes as string[];
+  };
+  const signIn = (u: { email: string }) => {
+    const agent = request.agent(app.getHttpServer());
+    return { agent, res: agent.post('/v1/auth/sign-in').send({ email: u.email, password: PASSWORD }) };
+  };
+
+  it('runs the whole lifecycle', async () => {
+    const u = await enrolled();
+    expect((await u.agent.get('/v1/me')).body.mfaEnabled).toBe(false);
+    const codes = await enable(u);
+    expect(codes).toHaveLength(10);
+    expect(new Set(codes).size).toBe(10);
+    expect((await u.agent.get('/v1/me')).body.mfaEnabled).toBe(true);
+    await waitMail(u.email, 'activée');
+    await u.agent.post('/v1/auth/mfa/setup').expect(409);
+
+    const stored = (await admin.query('select secret from mfa_authenticators')).rows.map((r) => r.secret);
+    expect(stored).not.toContain(u.secret);
+    const hashed = (await admin.query('select code_hash from mfa_recovery_codes')).rows.map((r) => r.code_hash);
+    expect(hashed.some((h: string) => codes.includes(h))).toBe(false);
+
+    // First step: the password alone yields a challenge, not a session.
+    const first = signIn(u);
+    const res = await first.res.expect(200);
+    expect(res.body).toEqual({ mfaRequired: true });
+    const cookies = (res.headers['set-cookie'] as unknown as string[]).join(';');
+    expect(cookies).toContain('tabaa_mfa=');
+    expect(cookies).toMatch(/tabaa_mfa=[^;]+;[^]*HttpOnly/i);
+    expect(cookies).not.toContain('tabaa_session=');
+    await first.agent.get('/v1/me').expect(401);
+    await first.agent.post('/v1/auth/mfa/verify').send({ code: '000000' }).expect(401);
+
+    // A fresh code (next step) completes it; replaying it on a new challenge fails.
+    clock.offsetMs += 30_000;
+    const code = totp(u.secret);
+    const ok = await first.agent.post('/v1/auth/mfa/verify').send({ code }).expect(200);
+    expect(ok.body).toMatchObject({ role: 'OWNER', mfaEnabled: true });
+    expect((ok.headers['set-cookie'] as unknown as string[]).join(';')).toContain('tabaa_session=');
+    await first.agent.get('/v1/me').expect(200);
+    await first.agent.post('/v1/auth/mfa/verify').send({ code }).expect(401);
+    const replay = signIn(u);
+    await replay.res.expect(200);
+    await replay.agent.post('/v1/auth/mfa/verify').send({ code }).expect(401);
+
+    // Recovery codes work once.
+    const viaRecovery = signIn(u);
+    await viaRecovery.res.expect(200);
+    await viaRecovery.agent.post('/v1/auth/mfa/verify').send({ recoveryCode: codes[0] }).expect(200);
+    const reuse = signIn(u);
+    await reuse.res.expect(200);
+    await reuse.agent.post('/v1/auth/mfa/verify').send({ recoveryCode: codes[0] }).expect(401);
+
+    // Regenerating needs the password and a current code, and retires the old codes.
+    clock.offsetMs += 30_000;
+    await viaRecovery.agent.post('/v1/auth/mfa/recovery-codes').send({ password: 'wrong-password-1', code: totp(u.secret) }).expect(401);
+    await viaRecovery.agent.post('/v1/auth/mfa/recovery-codes').send({ password: PASSWORD }).expect(401);
+    const fresh = (await viaRecovery.agent.post('/v1/auth/mfa/recovery-codes').send({ password: PASSWORD, code: totp(u.secret) }).expect(200)).body.recoveryCodes;
+    expect(fresh).toHaveLength(10);
+    const old = signIn(u);
+    await old.res.expect(200);
+    await old.agent.post('/v1/auth/mfa/verify').send({ recoveryCode: codes[1] }).expect(401);
+    const renewed = signIn(u);
+    await renewed.res.expect(200);
+    await renewed.agent.post('/v1/auth/mfa/verify').send({ recoveryCode: fresh[0] }).expect(200);
+
+    for (const action of ['auth.mfa_enabled', 'auth.mfa_failed', 'auth.mfa_recovery_used', 'auth.mfa_codes_regenerated']) {
+      expect((await events(u.tenant, action)).length, action).toBeGreaterThan(0);
+    }
+    expect((await events(u.tenant, 'auth.reauth_failed')).length).toBeGreaterThan(0);
+  });
+
+  it('disables with the password and a current code, and password reset keeps two-factor', async () => {
+    const u = await enrolled();
+    await enable(u);
+    clock.offsetMs += 30_000;
+    await u.agent.post('/v1/auth/mfa/disable').send({ password: 'wrong-password-1', code: totp(u.secret) }).expect(401);
+    const badCode = await u.agent.post('/v1/auth/mfa/disable').send({ password: PASSWORD, code: '000000' }).expect(401);
+    expect(badCode.body.code).toBe('INVALID_CODE');
+
+    await anon.post('/v1/auth/password/forgot').send({ email: u.email }).expect(204);
+    const token = tokenOf(await waitMail(u.email, 'Réinitialisation'));
+    await anon.post('/v1/auth/password/reset').send({ token, password: 'brand-new-password-1' }).expect(204);
+    expect((await anon.post('/v1/auth/sign-in').send({ email: u.email, password: 'brand-new-password-1' }).expect(200)).body).toEqual({
+      mfaRequired: true,
+    });
+
+    const agent = request.agent(app.getHttpServer());
+    const pre = await agent.post('/v1/auth/sign-in').send({ email: u.email, password: 'brand-new-password-1' }).expect(200);
+    expect(pre.body.mfaRequired).toBe(true);
+    clock.offsetMs += 30_000;
+    await agent.post('/v1/auth/mfa/verify').send({ code: totp(u.secret) }).expect(200);
+    clock.offsetMs += 30_000;
+    await agent.post('/v1/auth/mfa/disable').send({ password: 'brand-new-password-1', code: totp(u.secret) }).expect(204);
+    expect((await agent.get('/v1/me')).body.mfaEnabled).toBe(false);
+    await waitMail(u.email, 'désactivée');
+    const plain = await anon.post('/v1/auth/sign-in').send({ email: u.email, password: 'brand-new-password-1' }).expect(200);
+    expect(plain.body.mfaEnabled).toBe(false);
+    expect((await events(u.tenant, 'auth.mfa_disabled')).length).toBe(1);
+  });
+
+  it('kills the challenge after five failed attempts', async () => {
+    const u = await enrolled();
+    await enable(u);
+    const attempt = signIn(u);
+    await attempt.res.expect(200);
+    for (let i = 0; i < 5; i++) {
+      await attempt.agent.post('/v1/auth/mfa/verify').send({ code: '000000' }).expect(401);
+    }
+    clock.offsetMs += 30_000;
+    await attempt.agent.post('/v1/auth/mfa/verify').send({ code: totp(u.secret) }).expect(401);
+    const left = (await admin.query('select count(*)::int as n from mfa_challenges c join users x on x.id = c.user_id where x.email = $1', [u.email])).rows[0].n;
+    expect(left).toBe(0);
+  });
+});
+
+describe('accounts: seeded team and closure', () => {
+  const SEED_TENANT = '00000000-0000-4000-8000-0000000000e3';
+
+  it('seeds a MEMBER and a VIEWER with the expected permissions', async () => {
+    execFileSync('pnpm', ['exec', 'tsx', 'src/seed.ts'], {
+      env: { ...process.env, NODE_ENV: 'development', DEV_TENANT_ID: SEED_TENANT },
+      stdio: 'pipe',
+      timeout: 110_000,
+    });
+    tenantIds.push(SEED_TENANT);
+    const login = async (email: string) => {
+      const agent = request.agent(app.getHttpServer());
+      const res = await agent.post('/v1/auth/sign-in').send({ email, password: 'tabaa-demo-2026' }).expect(200);
+      return { agent, me: res.body };
+    };
+    const owner = await login('demo@tabaa.ma');
+    const member = await login('membre@tabaa.ma');
+    const viewer = await login('lecteur@tabaa.ma');
+    expect([owner.me.role, member.me.role, viewer.me.role]).toEqual(['OWNER', 'MEMBER', 'VIEWER']);
+    expect(owner.me.tenant.id).toBe(SEED_TENANT);
+    await member.agent.get('/v1/dashboard').expect(200);
+    await member.agent.post('/v1/parties').send({ ...customerBody, name: 'Créé par le membre' }).expect(201);
+    await member.agent.put('/v1/company').send(company).expect(403);
+    await member.agent.get('/v1/audit-events').expect(403);
+    await member.agent.post('/v1/tenant/close').send({ password: 'tabaa-demo-2026', confirmName: 'x' }).expect(403);
+    await viewer.agent.get('/v1/invoices').expect(200);
+    await viewer.agent.post('/v1/parties').send(customerBody).expect(403);
+    await owner.agent.post('/v1/tenant/close').send({ password: 'wrong-password-1', confirmName: owner.me.tenant.name }).expect(401);
+  }, 120_000);
+});
+
+describe('accounts: closing a workspace', () => {
+  it('rejects bad confirmation, forbids MEMBER, then closes and retains', async () => {
+    const owner = request.agent(app.getHttpServer());
+    const res = await signUp(owner as never);
+    const tenant = res.body.tenant.id as string;
+    await owner.put('/v1/company').send(company).expect(200);
+    const used = (await owner.post('/v1/parties').send(customerBody).expect(201)).body;
+    const unused = (await owner.post('/v1/parties').send({ ...customerBody, name: 'Jamais facturé' }).expect(201)).body;
+    await owner.post('/v1/items').send({ name: 'Article', unitPrice: '10', vatRate: '20' }).expect(201);
+    const mk = async (date: string) =>
+      (await owner.post('/v1/invoices').send({ customerId: used.id, issueDate: date, lines: [line] }).expect(201)).body;
+    const issued = (await owner.post(`/v1/invoices/${(await mk('2026-03-10')).id}/issue`).expect(200)).body;
+    await mk('2026-03-11');
+    await anon.post('/v1/auth/sign-in').send({ email: res.body.user.email, password: 'wrong-password-1' }).expect(401);
+
+    const auth = app.get(AuthService, { strict: false });
+    const memberEmail = uniqueEmail('member');
+    await auth.addMember({ name: 'Collègue', email: memberEmail, passwordHash: await auth.hashPassword(PASSWORD), tenantId: tenant, role: 'MEMBER' });
+    const member = request.agent(app.getHttpServer());
+    await member.post('/v1/auth/sign-in').send({ email: memberEmail, password: PASSWORD }).expect(200);
+    await member.post('/v1/tenant/close').send({ password: PASSWORD, confirmName: 'Société Test' }).expect(403);
+
+    const url = '/v1/tenant/close';
+    await owner.post(url).send({ password: 'wrong-password-1', confirmName: 'Société Test' }).expect(401);
+    const badName = await owner.post(url).send({ password: PASSWORD, confirmName: 'société test' }).expect(422);
+    expect(badName.body.issues[0].path).toBe('confirmName');
+
+    await owner.post(url).send({ password: PASSWORD, confirmName: 'Société Test' }).expect(204);
+
+    const generic = await anon.post('/v1/auth/sign-in').send({ email: res.body.user.email, password: PASSWORD }).expect(401);
+    expect(generic.body.code).toBe('INVALID_CREDENTIALS');
+    await owner.get('/v1/me').expect(401);
+    await member.get('/v1/me').expect(401);
+    const q = async (sql: string, params: unknown[] = [tenant]) => (await admin.query(sql, params)).rows;
+    expect(await q('select id from users where email = any($1)', [[res.body.user.email, memberEmail]])).toHaveLength(0);
+    expect(await q("select id from invoices where tenant_id = $1 and state = 'DRAFT'")).toHaveLength(0);
+    expect(await q('select id from items where tenant_id = $1')).toHaveLength(0);
+    const parties = (await q('select id from parties where tenant_id = $1')).map((r) => r.id);
+    expect(parties).toContain(used.id);
+    expect(parties).not.toContain(unused.id);
+    const kept = await q("select id, number, retain_until::text as r from invoices where tenant_id = $1 and state = 'ISSUED'");
+    expect(kept).toHaveLength(1);
+    expect(kept[0].number).toBe(issued.number);
+    expect(kept[0].r).toBe('2036-12-31');
+    const log = await q('select action, actor_name, actor_user_id, summary from audit_events where tenant_id = $1');
+    expect(log.length).toBeGreaterThan(5);
+    expect(log.every((e) => e.actor_user_id === null && (e.actor_name === null || e.actor_name === 'Utilisateur supprimé'))).toBe(true);
+    expect(log.some((e) => e.action === 'tenant.closed')).toBe(true);
+    expect(log.filter((e) => e.action === 'auth.sign_in_failed').every((e) => e.summary === null)).toBe(true);
+    const closed = (await q('select closed_at from tenants where id = $1'))[0];
+    expect(closed.closed_at).not.toBeNull();
+    for (const email of [res.body.user.email, memberEmail]) await waitMail(email, 'fermé');
+
+    // The business role can still read nothing of it through the API, and cannot delete the kept rows.
+    await expect(admin.query('delete from invoices where tenant_id = $1', [tenant])).rejects.toThrow(/immuable/);
+    await expect(admin.query('delete from audit_events where tenant_id = $1', [tenant])).rejects.toThrow(/ajout seul/);
+  });
+
+  it('purges expired rows and, after the retention date, the closed workspace', async () => {
+    const closed = (await admin.query('select id from tenants where closed_at is not null and id <> $1', ['00000000-0000-4000-8000-0000000000e3'])).rows[0].id as string;
+    tenantIds.push(closed);
+    const retention = app.get(RetentionService, { strict: false });
+
+    const email = uniqueEmail('stale');
+    await anon.post('/v1/auth/sign-up').send({ name: 'Stale', email, password: PASSWORD, companyName: 'Stale' }).expect(202);
+    await admin.query("update pending_signups set expires_at = now() - interval '2 days' where email = $1", [email]);
+    await retention.run(new Date('2030-06-01T03:00:00Z'));
+    expect((await admin.query('select 1 from pending_signups where email = $1', [email])).rowCount).toBe(0);
+    expect((await admin.query('select 1 from invoices where tenant_id = $1', [closed])).rowCount).toBe(1);
+    expect((await admin.query('select 1 from audit_events where tenant_id = $1', [closed])).rowCount).toBeGreaterThan(0);
+
+    expect((await retention.run(new Date('2037-01-02T03:00:00Z'))).tenants).toBeGreaterThanOrEqual(1);
+    for (const table of ['invoices', 'payments', 'audit_events', 'parties', 'companies']) {
+      expect((await admin.query(`select 1 from ${table} where tenant_id = $1`, [closed])).rowCount, table).toBe(0);
+    }
+    expect((await admin.query('select 1 from tenants where id = $1', [closed])).rowCount).toBe(0);
   });
 });

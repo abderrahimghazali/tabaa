@@ -275,6 +275,7 @@ export class InvoicesService {
         state: 'ISSUED',
         number: `${series}-${year}-${String(seq.lastValue).padStart(5, '0')}`,
         issuedAt: new Date(),
+        retainUntil: `${year + activeRules(row.issueDate).retentionYears}-12-31`,
         snapshot: { customer: dto(customer) as Party, totals, seller: dto(company) as Company },
         totalNet: totals.totalNet,
         totalVat: totals.totalVat,

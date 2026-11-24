@@ -30,7 +30,8 @@ type Row = Party & { owed: number };
 
 export function ClientsView({ parties, outstanding, openNew }: { parties: Party[]; outstanding: Record<string, string>; openNew?: boolean }) {
   const { t, locale } = useI18n();
-  const [creating, setCreating] = useState(!!openNew);
+  const canWrite = useCanWrite();
+  const [creating, setCreating] = useState(!!openNew && canWrite);
   const [q, setQ] = useState("");
   const [type, setType] = useState("all");
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -107,7 +108,6 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
     getPaginationRowModel: getPaginationRowModel(),
   });
   const rows = table.getRowModel().rows;
-  const canWrite = useCanWrite();
   const headers = table.getHeaderGroups()[0]!.headers;
   const totalPages = table.getPageCount();
 

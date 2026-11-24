@@ -119,7 +119,14 @@ const tx = <T>(fn: () => Promise<T>) => tenantDb.run(tenant, fn);
 await wipeTenant(tenant);
 
 const demo = { name: 'Salma Bennani', email: 'demo@tabaa.ma', password: 'tabaa-demo-2026' };
-await app.get(AuthService).createAccount({ ...demo, tenantName: 'Maghreb Digital Services', tenantId: tenant });
+const accounts = app.get(AuthService);
+const passwordHash = await accounts.hashPassword(demo.password);
+await accounts.createAccount({ name: demo.name, email: demo.email, passwordHash, tenantName: 'Maghreb Digital Services', tenantId: tenant });
+const team = [
+  { name: 'Youssef El Amrani', email: 'membre@tabaa.ma', role: 'MEMBER' as const },
+  { name: 'Nadia Berrada', email: 'lecteur@tabaa.ma', role: 'VIEWER' as const },
+];
+for (const m of team) await accounts.addMember({ ...m, passwordHash, tenantId: tenant });
 
 const company = app.get(CompanyService);
 const parties = app.get(PartiesService);
@@ -188,6 +195,7 @@ const creditNote = await tx(() => invoices.creditNote(source.id));
 const issuedCn = await tx(() => invoices.issue(creditNote.id));
 console.log(issuedCn.number, 'avoir sur', source.number);
 
-console.log(`\nDemo account: ${demo.email} / ${demo.password}`);
+console.log(`\nDemo accounts (password ${demo.password}):\n  ${demo.email} (OWNER)\n  ${team.map((m) => `${m.email} (${m.role})`).join('\n  ')}`);
 
 await app.close();
+process.exit(0);

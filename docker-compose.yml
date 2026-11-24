@@ -9,5 +9,15 @@ services:
       - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+  # Catches every outgoing email in development. Inbox at http://localhost:8125
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:1125:1025"
+      - "127.0.0.1:8125:8025"
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6380:6379"
 volumes:
   pgdata:

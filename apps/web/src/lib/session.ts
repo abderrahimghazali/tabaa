@@ -1,6 +1,9 @@
 export const SESSION_COOKIE = "tabaa_session";
+export const MFA_COOKIE = "tabaa_mfa";
 
-const AUTH_PATHS = ["/connexion", "/inscription", "/mot-de-passe-oublie", "/reinitialiser"];
+const AUTH_PATHS = ["/connexion", "/inscription", "/mot-de-passe-oublie", "/reinitialiser", "/verification"];
+// Reachable signed in or out.
+export const isPublicPath = (pathname: string) => pathname.startsWith("/session-expiree") || pathname.startsWith("/espace-ferme");
 export const isAuthPath = (pathname: string) => AUTH_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
 const ORIGIN = "http://tabaa.invalid";
@@ -27,6 +30,6 @@ export function safeNext(next: string | null | undefined): string {
     return "/";
   }
   if (url.origin !== ORIGIN || url.pathname.startsWith("//")) return "/";
-  if (isAuthPath(url.pathname) || url.pathname.startsWith("/session-expiree")) return "/";
+  if (isAuthPath(url.pathname) || isPublicPath(url.pathname)) return "/";
   return url.pathname + url.search;
 }

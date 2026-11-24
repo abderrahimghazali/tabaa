@@ -112,7 +112,8 @@ function ItemForm({
 
 export function ItemsView({ items, vatRates, openNew }: { items: Item[]; vatRates: string[]; openNew?: boolean }) {
   const { t, locale } = useI18n();
-  const [editing, setEditing] = useState<Item | "new" | null>(openNew ? "new" : null);
+  const canWrite = useCanWrite();
+  const [editing, setEditing] = useState<Item | "new" | null>(openNew && canWrite ? "new" : null);
   const [pending, setPending] = useState(false);
   const [deleting, setDeleting] = useState<Item | null>(null);
   const [q, setQ] = useState("");
@@ -182,7 +183,6 @@ export function ItemsView({ items, vatRates, openNew }: { items: Item[]; vatRate
     } else toast.error(res.error.message);
   };
 
-  const canWrite = useCanWrite();
   const canAdmin = useCanAdmin();
 
   return (

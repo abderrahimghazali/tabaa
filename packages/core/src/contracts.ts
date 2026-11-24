@@ -255,6 +255,7 @@ export const Me = z.object({
   user: z.object({ id: z.string(), name: z.string(), email: z.email() }),
   tenant: z.object({ id: Id, name: z.string() }),
   role: Role,
+  mfaEnabled: z.boolean(),
 });
 export type Me = z.infer<typeof Me>;
 
@@ -270,3 +271,38 @@ export const AuditEvent = z.object({
   ip: z.string().nullable(),
 });
 export type AuditEvent = z.infer<typeof AuditEvent>;
+
+export const SignUpAccepted = z.object({ status: z.literal("PENDING_VERIFICATION") });
+export type SignUpAccepted = z.infer<typeof SignUpAccepted>;
+
+export const VerifyEmailInput = z.object({ token: z.string().min(1) });
+export type VerifyEmailInput = z.infer<typeof VerifyEmailInput>;
+
+// Sign-in either completes, or asks for the second factor.
+export const MfaRequired = z.object({ mfaRequired: z.literal(true) });
+export const SignInResult = z.union([Me, MfaRequired]);
+export type SignInResult = z.infer<typeof SignInResult>;
+
+const TotpCode = z.string().regex(/^\d{6}$/);
+
+// Exactly one of the two.
+export const MfaVerifyInput = z
+  .object({ code: TotpCode.optional(), recoveryCode: z.string().min(8).max(40).optional() })
+  .refine((v) => (v.code ? 1 : 0) + (v.recoveryCode ? 1 : 0) === 1);
+export type MfaVerifyInput = z.infer<typeof MfaVerifyInput>;
+
+export const MfaSetup = z.object({ secret: z.string(), otpauthUrl: z.string() });
+export type MfaSetup = z.infer<typeof MfaSetup>;
+
+export const MfaEnableInput = z.object({ code: TotpCode });
+export type MfaEnableInput = z.infer<typeof MfaEnableInput>;
+
+export const RecoveryCodes = z.object({ recoveryCodes: z.array(z.string()) });
+export type RecoveryCodes = z.infer<typeof RecoveryCodes>;
+
+// Re-authentication for sensitive actions: the password, plus a code when two-factor is on.
+export const Reauth = z.object({ password: z.string().min(1), code: TotpCode.optional() });
+export type Reauth = z.infer<typeof Reauth>;
+
+export const CloseTenantInput = Reauth.extend({ confirmName: z.string().min(1) });
+export type CloseTenantInput = z.infer<typeof CloseTenantInput>;

@@ -11,6 +11,7 @@ import { loadAuditEvents } from "@/lib/actions";
 import { signOutAll } from "@/lib/auth-actions";
 import { useI18n } from "@/lib/i18n-client";
 import type { Key } from "@/lib/i18n";
+import { MfaSection } from "./mfa-section";
 import { Section } from "./section";
 
 const PAGE = 25;
@@ -77,6 +78,8 @@ export function SecurityPanel({
           </ModalTrigger>
         </div>
       </Section>
+
+      <MfaSection />
 
       {role === "OWNER" && (
         <Section title={t("security.exportTitle")} description={t("security.exportBody")}>

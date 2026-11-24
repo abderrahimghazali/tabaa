@@ -8,6 +8,8 @@ export interface RulePackage {
   defaultPaymentTermDays: number;
   maxPaymentTermDays: number;
   stampDutyRate: string;
+  // Years kept after the end of the invoice's calendar year. To be confirmed with the accountant.
+  retentionYears: number;
 }
 
 export const MA_2026: RulePackage = {
@@ -17,6 +19,7 @@ export const MA_2026: RulePackage = {
   defaultPaymentTermDays: 60,
   maxPaymentTermDays: 120,
   stampDutyRate: "0.0025",
+  retentionYears: 10,
 };
 
 const PACKAGES = [MA_2026];

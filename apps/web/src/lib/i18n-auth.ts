@@ -34,8 +34,8 @@ export const auth = {
   ],
   "auth.sendLink": ["Envoyer le lien", "إرسال الرابط"],
   "auth.forgotSent": [
-    "Si un compte existe pour cette adresse, un lien vient d'être envoyé.",
-    "إذا كان هناك حساب مرتبط بهذا العنوان، فقد أُرسل إليه رابط للتو.",
+    "Si un compte existe pour cette adresse, un e-mail contenant un lien vient d'être envoyé.",
+    "إذا كان هناك حساب مرتبط بهذا العنوان، فقد أُرسلت إليه رسالة تحتوي على رابط للتو.",
   ],
   "auth.backToSignIn": ["Retour à la connexion", "العودة إلى تسجيل الدخول"],
 
@@ -64,6 +64,53 @@ export const auth = {
   "auth.err.email": ["Saisissez une adresse e-mail valide.", "أدخل بريدًا إلكترونيًا صالحًا."],
   "auth.err.passwordShort": ["Le mot de passe doit comporter au moins 10 caractères.", "يجب أن تتكوّن كلمة المرور من 10 أحرف على الأقل."],
 
+
+  "auth.checkInboxTitle": ["Vérifiez votre boîte de réception", "تحقق من بريدك الوارد"],
+  "auth.checkInboxBody": [
+    "Nous avons envoyé un lien de confirmation à {email}. Il est valable 24 heures.",
+    "أرسلنا رابط التأكيد إلى {email}. صالح لمدة 24 ساعة.",
+  ],
+  "auth.checkInboxExisting": [
+    "Si un compte existe déjà avec cette adresse, l'e-mail vous explique comment vous connecter.",
+    "إذا كان هناك حساب بهذا العنوان بالفعل، فإن الرسالة تشرح لك كيفية تسجيل الدخول.",
+  ],
+  "auth.resend": ["Renvoyer l'e-mail", "إعادة إرسال الرسالة"],
+  "auth.resent": ["E-mail renvoyé.", "أُعيد إرسال الرسالة."],
+  "auth.verifyingTitle": ["Vérification de votre adresse", "جارٍ التحقق من عنوانك"],
+  "auth.verifyingBody": ["Un instant, nous confirmons votre adresse e-mail.", "لحظة من فضلك، نؤكد بريدك الإلكتروني."],
+  "auth.verifyFailedTitle": ["Lien invalide ou expiré", "رابط غير صالح أو منتهي"],
+  "auth.verifyFailedBody": [
+    "Ce lien de confirmation ne fonctionne plus. Recommencez l'inscription pour en recevoir un nouveau.",
+    "لم يعد رابط التأكيد هذا صالحًا. أعد التسجيل لتلقي رابط جديد.",
+  ],
+  "auth.backToSignUp": ["Recommencer l'inscription", "إعادة التسجيل"],
+  "auth.mfaExpired": [
+    "La vérification en deux étapes a expiré ou trop d'essais ont échoué. Connectez-vous de nouveau.",
+    "انتهت مهلة التحقق بخطوتين أو تجاوزت عدد المحاولات. سجّل الدخول من جديد.",
+  ],
+  "auth.mfaTitle": ["Vérification en deux étapes", "التحقق بخطوتين"],
+  "auth.mfaSub": [
+    "Saisissez le code à six chiffres de votre application d'authentification.",
+    "أدخل الرمز المكوّن من ستة أرقام من تطبيق المصادقة.",
+  ],
+  "auth.mfaCode": ["Code à six chiffres", "الرمز المكوّن من ستة أرقام"],
+  "auth.mfaRecoveryTitle": ["Code de secours", "رمز الطوارئ"],
+  "auth.mfaRecoverySub": [
+    "Saisissez l'un de vos codes de secours. Chaque code ne sert qu'une fois.",
+    "أدخل أحد رموز الطوارئ. كل رمز يُستعمل مرة واحدة فقط.",
+  ],
+  "auth.mfaRecoveryCode": ["Code de secours", "رمز الطوارئ"],
+  "auth.mfaUseRecovery": ["Utiliser un code de secours", "استعمال رمز طوارئ"],
+  "auth.mfaUseApp": ["Utiliser le code de l'application", "استعمال رمز التطبيق"],
+  "auth.mfaVerify": ["Vérifier", "تحقّق"],
+  "auth.err.invalidCode": ["Code incorrect. Vérifiez-le et réessayez.", "الرمز غير صحيح. تحقق منه وأعد المحاولة."],
+  "auth.err.invalidRecovery": ["Code de secours incorrect ou déjà utilisé.", "رمز الطوارئ غير صحيح أو سبق استعماله."],
+  "auth.closedTitle": ["Espace fermé", "تم إغلاق المساحة"],
+  "auth.closedBody": [
+    "L'accès est coupé pour tous les utilisateurs de cet espace. Les factures émises sont conservées, verrouillées, pendant la durée légale, puis supprimées.",
+    "تم قطع الوصول لجميع مستخدمي هذه المساحة. تُحفظ الفواتير الصادرة مقفلة طوال المدة القانونية ثم تُحذف.",
+  ],
+  "auth.closedBack": ["Retour à la connexion", "العودة إلى تسجيل الدخول"],
   "auth.signOut": ["Se déconnecter", "تسجيل الخروج"],
   "settings.account": ["Compte", "الحساب"],
   "account.intro": ["Les informations de votre compte de connexion.", "معلومات حساب الدخول الخاص بك."],

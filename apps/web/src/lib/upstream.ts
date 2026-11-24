@@ -1,7 +1,7 @@
 import "server-only";
 import { isIP } from "node:net";
 import { cookies, headers } from "next/headers";
-import { SESSION_COOKIE } from "./session";
+import { MFA_COOKIE, SESSION_COOKIE } from "./session";
 
 export function apiRoot(): string {
   return (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4100").replace(/\/v1\/?$/, "");
@@ -25,11 +25,14 @@ export async function clientIp(): Promise<string | undefined> {
 /** Headers every server-side call to the API carries: the session, the shared secret, and the browser's address. */
 export async function upstreamHeaders(json: boolean): Promise<Record<string, string>> {
   const [jar, ip] = await Promise.all([cookies(), clientIp()]);
-  const token = jar.get(SESSION_COOKIE)?.value;
+  const pairs = [SESSION_COOKIE, MFA_COOKIE].flatMap((name) => {
+    const v = jar.get(name)?.value;
+    return v ? [`${name}=${v}`] : [];
+  });
   return {
     "x-internal-token": internalToken(),
     ...(ip && { "x-client-ip": ip }),
-    ...(token && { cookie: `${SESSION_COOKIE}=${token}` }),
+    ...(pairs.length && { cookie: pairs.join("; ") }),
     ...(json && { "content-type": "application/json" }),
   };
 }

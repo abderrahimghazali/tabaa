@@ -52,7 +52,7 @@ Tabaa (طابع, « le cachet ») est un logiciel de facturation pensé pour cet
 | **Tableau de bord** | Créances par ancienneté, facturé et encaissé sur six mois, délai moyen de paiement, échéancier |
 | **UBL 2.1** | Export XML de chaque facture émise |
 | **Clients et catalogue** | Fiche client avec encours, articles et services avec taux de TVA |
-| **Comptes et espaces** | Inscription, connexion, réinitialisation du mot de passe ; un espace isolé par entreprise |
+| **Comptes et espaces** | Inscription avec vérification de l'e-mail, double authentification, réinitialisation du mot de passe ; un espace isolé par entreprise, avec rôles |
 | **Deux langues** | Interface en français et en arabe, avec mise en page de droite à gauche |
 
 <p align="center">
@@ -171,9 +171,9 @@ Prérequis : Node.js 22, pnpm 10, Docker.
 git clone https://github.com/abderrahimghazali/tabaa.git
 cd tabaa
 pnpm install
-cp .env.example .env            # puis remplacer les trois valeurs « change-me » par des valeurs aléatoires
+cp .env.example .env            # puis remplacer les valeurs « change-me » par des valeurs aléatoires
 
-pnpm db:up                      # PostgreSQL sur le port 5433
+pnpm db:up                      # PostgreSQL, Redis et une boîte e-mail locale
 pnpm --filter @facture/core build
 pnpm --filter api db:migrate
 pnpm --filter api db:seed       # données de démonstration
@@ -181,9 +181,9 @@ pnpm --filter api db:seed       # données de démonstration
 pnpm dev                        # interface sur http://localhost:3100, API sur http://localhost:4100
 ```
 
-Compte de démonstration créé par le jeu de données : `demo@tabaa.ma` / `tabaa-demo-2026`.
+Comptes de démonstration créés par le jeu de données, mot de passe `tabaa-demo-2026` : `demo@tabaa.ma` (propriétaire), `membre@tabaa.ma` (membre), `lecteur@tabaa.ma` (lecture seule).
 
-Sans fournisseur d'e-mail configuré, le lien de réinitialisation du mot de passe est écrit dans le journal de l'API en développement.
+En développement, tous les e-mails envoyés (vérification, réinitialisation, alertes) arrivent dans la boîte locale : http://localhost:8125.
 
 ```bash
 pnpm --filter @facture/core test   # logique métier
@@ -200,16 +200,18 @@ Tabaa traite des pièces comptables, des identifiants fiscaux et des données pe
 |---|---|
 | Cloisonnement | Sécurité au niveau des lignes forcée sur chaque table d'un espace ; un test échoue si une table en est dépourvue |
 | Moindre privilège | Trois rôles de base de données distincts : migrations, requêtes métier, authentification. Le rôle métier ne peut pas lire les comptes ni les sessions |
-| Authentification | Mots de passe hachés avec scrypt, sessions côté serveur révocables, cookie `HttpOnly`, `Secure`, `SameSite=Lax`, expiration après 8 heures d'inactivité et 14 jours au plus, déconnexion de tous les appareils |
+| Authentification | Mots de passe hachés avec scrypt, double authentification par application (TOTP) avec codes de secours, e-mail vérifié à l'inscription, sessions côté serveur révocables, cookie `HttpOnly`, `Secure`, `SameSite=Lax`, expiration après 8 heures d'inactivité et 14 jours au plus, déconnexion de tous les appareils |
 | Contrôle d'accès | Rôles propriétaire, administrateur, membre, lecteur, vérifiés par l'API |
 | Journal d'activité | Journal en ajout seul des connexions, refus d'accès et modifications ; la base rejette toute modification ou suppression d'une entrée |
 | Intégrité des pièces | Facture émise figée avec les coordonnées du vendeur et du client ; encaissements annulés, jamais supprimés |
+| Suppression et conservation | Export des données par le propriétaire ; fermeture de l'espace avec suppression des comptes et des brouillons, conservation verrouillée des factures émises pendant la durée légale, puis purge automatique |
+| Non-divulgation | Réponses identiques à l'inscription, à la connexion et à la réinitialisation, que le compte existe ou non |
 | Protection du web | Politique de sécurité du contenu avec nonce, en-têtes de sécurité, vérification de l'origine des requêtes, limitation du nombre de tentatives de connexion |
 | Entrées | Validation par schéma de chaque requête, tailles bornées, requêtes SQL paramétrées |
 | Configuration | Aucun secret dans le dépôt ; l'API refuse de démarrer si un réglage requis manque |
 | Chaîne logicielle | Versions verrouillées, audit des dépendances, analyse CodeQL et mises à jour Dependabot à chaque modification |
 
-> Tabaa **n'est pas certifié ISO 27001**. Cette norme certifie le système de management de la sécurité d'une organisation, à l'issue d'un audit ; aucun logiciel ne peut l'être par son seul code. Restent à la charge de l'exploitant, notamment : la double authentification (prévue), l'envoi des e-mails de réinitialisation, les sauvegardes et leur restauration, le chiffrement et le TLS de l'hébergement, la gestion des secrets, la supervision, et les démarches auprès de la CNDP (loi 09-08).
+> Tabaa **n'est pas certifié ISO 27001**. Cette norme certifie le système de management de la sécurité d'une organisation, à l'issue d'un audit ; aucun logiciel ne peut l'être par son seul code. Restent à la charge de l'exploitant, notamment : un fournisseur d'e-mail (SMTP), les sauvegardes et leur restauration, le chiffrement et le TLS de l'hébergement, la gestion des secrets, la supervision, et les démarches auprès de la CNDP (loi 09-08).
 
 Pour signaler une faille, voir [`SECURITY.md`](SECURITY.md).
 
@@ -223,7 +225,7 @@ gantt
     section Fait
     Factures, avoirs, numérotation, UBL      :done, 2026-11-24, 3d
     Encaissements et tableau de bord         :done, 2026-11-24, 3d
-    Comptes, connexion, isolation            :done, 2026-11-24, 3d
+    Comptes, double authentification, journal :done, 2026-11-24, 3d
     section Ensuite
     PDF archivable et envoi au client        :2026-12-01, 3w
     Équipe, rôles, accès expert-comptable    :2026-12-15, 3w

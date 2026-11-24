@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { buildCsp } from "@/lib/csp";
-import { SESSION_COOKIE, isAuthPath } from "@/lib/session";
+import { SESSION_COOKIE, isAuthPath, isPublicPath } from "@/lib/session";
 
 function withCsp(response: NextResponse, csp: string) {
   response.headers.set("Content-Security-Policy", csp);
@@ -14,13 +14,13 @@ export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const signedIn = request.cookies.has(SESSION_COOKIE);
 
-  if (!pathname.startsWith("/session-expiree")) {
+  if (!isPublicPath(pathname)) {
     if (!signedIn && !isAuthPath(pathname)) {
       const url = new URL("/connexion", request.url);
       if (pathname !== "/") url.searchParams.set("next", pathname + search);
       return withCsp(NextResponse.redirect(url), csp);
     }
-    if (signedIn && isAuthPath(pathname) && !pathname.startsWith("/reinitialiser")) {
+    if (signedIn && isAuthPath(pathname) && !pathname.startsWith("/reinitialiser") && !pathname.startsWith("/verification")) {
       return withCsp(NextResponse.redirect(new URL("/", request.url)), csp);
     }
   }

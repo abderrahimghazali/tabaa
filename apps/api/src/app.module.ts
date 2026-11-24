@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthenticationModule } from '@nestjs/authentication';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, minutes, normalizeIp } from '@nestjs/throttler';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ApiExceptionFilter } from './common/api-exception.filter.js';
@@ -8,6 +9,11 @@ import { TenantInterceptor } from './common/tenant.interceptor.js';
 import { accountEmail } from './auth/account-email.js';
 import { cookieSecure, scryptLogN } from './auth/security-policy.js';
 import { AuditModule } from './audit/audit.module.js';
+import { MailModule } from './mail/mail.module.js';
+import { clock } from './common/clock.js';
+import { RedisThrottlerStorage } from './common/redis-throttler.storage.js';
+import { RetentionModule } from './retention/retention.module.js';
+import { TenantModule } from './tenant/tenant.module.js';
 import { ExportModule } from './export/export.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { env } from './env.js';
@@ -20,16 +26,21 @@ import { PartiesModule } from './parties/parties.module.js';
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      { name: 'default', ttl: minutes(1), limit: 600 },
-      {
-        name: 'account',
-        ttl: minutes(15),
-        limit: 10,
-        skipIf: (context) => !accountEmail(context.switchToHttp().getRequest()),
-        getTracker: (req) => `${accountEmail(req)}|${normalizeIp(req.clientIp ?? req.ip)}`,
-      },
-    ]),
+    ScheduleModule.forRoot(),
+    MailModule,
+    ThrottlerModule.forRoot({
+      ...(env.redisUrl && { storage: new RedisThrottlerStorage(env.redisUrl) }),
+      throttlers: [
+        { name: 'default', ttl: minutes(1), limit: 600 },
+        {
+          name: 'account',
+          ttl: minutes(15),
+          limit: 10,
+          skipIf: (context) => !accountEmail(context.switchToHttp().getRequest()),
+          getTracker: (req) => `${accountEmail(req)}|${normalizeIp(req.clientIp ?? req.ip)}`,
+        },
+      ],
+    }),
     AuthenticationModule.forRoot({
       session: {
         cookieName: 'tabaa_session',
@@ -39,6 +50,7 @@ import { PartiesModule } from './parties/parties.module.js';
         trustedOrigins: [env.webUrl],
       },
       password: { logN: scryptLogN(env.nodeEnv) },
+      mfa: { issuer: 'Tabaa', encryption: { keys: [env.mfaKey] }, pendingTtl: '5m', now: clock.now },
       passwordReset: { url: `${env.webUrl}/reinitialiser`, ttl: '1h' },
     }),
     DbModule,
@@ -50,6 +62,8 @@ import { PartiesModule } from './parties/parties.module.js';
     DashboardModule,
     AuditModule,
     ExportModule,
+    TenantModule,
+    RetentionModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AppThrottlerGuard },

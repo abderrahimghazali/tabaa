@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import Link from "next/link";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { RiArrowLeftLine, RiMailCheckLine } from "@remixicon/react";
 import type { ApiError } from "@facture/core";
+import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
+import { BrandLoader } from "@/components/ui/brand";
 import { LinkButton } from "@/components/base/buttons/link-button";
-import { forgotPassword, resetPassword, signIn, signUp } from "@/lib/auth-actions";
+import { forgotPassword, resetPassword, signIn, signUp, verifyEmail, verifyMfa } from "@/lib/auth-actions";
 import { useI18n } from "@/lib/i18n-client";
 import { AuthHeading, Notice, PasswordField, SubmitButton, errorKey, fieldIssue, useFocusFirstInvalid } from "./fields";
 
@@ -48,7 +49,7 @@ function useAuthSubmit<T>(validate: (fd: FormData) => Errors, run: (fd: FormData
   return { ref, pending, errors, formError, apiError, onSubmit };
 }
 
-export function SignInForm({ next, expired, reset }: { next?: string; expired?: boolean; reset?: boolean }) {
+export function SignInForm({ next, expired, reset, mfaExpired }: { next?: string; expired?: boolean; reset?: boolean; mfaExpired?: boolean }) {
   const { t } = useI18n();
   const f = useAuthSubmit(
     (fd) => {
@@ -65,6 +66,7 @@ export function SignInForm({ next, expired, reset }: { next?: string; expired?: 
       <form ref={f.ref} onSubmit={f.onSubmit} noValidate className="flex flex-col gap-4">
         {reset && <Notice tone="success">{t("auth.resetDone")}</Notice>}
         {expired && !reset && <Notice tone="info">{t("auth.expired")}</Notice>}
+        {mfaExpired && <Notice tone="info">{t("auth.mfaExpired")}</Notice>}
         {f.formError && <Notice tone="error">{f.formError}</Notice>}
         <Input name="email" type="email" label={t("auth.email")} autoComplete="email" isRequired isInvalid={!!f.errors.email} errorMessage={f.errors.email} />
         <PasswordField name="password" maxLength={128} label={t("auth.password")} autoComplete="current-password" isRequired errorMessage={f.errors.password} />
@@ -80,8 +82,13 @@ export function SignInForm({ next, expired, reset }: { next?: string; expired?: 
   );
 }
 
+type SignUpValues = { name: string; email: string; password: string; companyName: string };
+
 export function SignUpForm() {
   const { t } = useI18n();
+  const [sent, setSent] = useState<SignUpValues | null>(null);
+  const [resent, setResent] = useState(false);
+  const [resending, startResend] = useTransition();
   const f = useAuthSubmit(
     (fd) => {
       const e: Errors = {};
@@ -91,38 +98,190 @@ export function SignUpForm() {
       if (!text(fd, "companyName")) e.companyName = t("auth.err.required");
       return e;
     },
-    (fd) => signUp({ name: text(fd, "name"), email: text(fd, "email"), password: String(fd.get("password")), companyName: text(fd, "companyName") }),
+    async (fd) => {
+      const values = { name: text(fd, "name"), email: text(fd, "email"), password: String(fd.get("password")), companyName: text(fd, "companyName") };
+      const res = await signUp(values);
+      if (res.ok) {
+        setSent(values);
+        return;
+      }
+      return res;
+    },
   );
-  const taken = f.apiError?.code === "EMAIL_TAKEN";
+
+  if (sent) {
+    const resend = () =>
+      startResend(async () => {
+        setResent(false);
+        const res = await signUp(sent);
+        if (res.ok) setResent(true);
+      });
+    return (
+      <>
+        <AuthHeading title={t("auth.checkInboxTitle")} />
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start gap-3 rounded-2xl bg-background-secondary-default p-4">
+            <RiMailCheckLine className="mt-0.5 size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+            <p role="status" className="text-body-regular text-text-primary">
+              {t("auth.checkInboxBody", { email: sent.email })}
+            </p>
+          </div>
+          <p className="text-body-regular text-text-secondary">{t("auth.checkInboxExisting")}</p>
+          <div className="flex items-center gap-3">
+            <Button variant="secondary" onClick={resend} aria-busy={resending}>
+              {resending ? <BrandLoader size={20} label={t("auth.pending")} className="flex-row" /> : t("auth.resend")}
+            </Button>
+            {resent && <span role="status" className="text-body-medium text-text-secondary">{t("auth.resent")}</span>}
+          </div>
+        </div>
+        <p className="mt-6 text-center">
+          <LinkButton href="/connexion" leadingIcon={RiArrowLeftLine}>{t("auth.backToSignIn")}</LinkButton>
+        </p>
+      </>
+    );
+  }
+
   return (
     <>
       <AuthHeading title={t("auth.signUpTitle")} sub={t("auth.signUpSub")} />
       <form ref={f.ref} onSubmit={f.onSubmit} noValidate className="flex flex-col gap-4">
         {f.formError && <Notice tone="error">{f.formError}</Notice>}
         <Input name="name" maxLength={120} label={t("auth.name")} autoComplete="name" isRequired isInvalid={!!f.errors.name} errorMessage={f.errors.name} />
-        <Input
-          name="email"
-          type="email"
-          label={t("auth.workEmail")}
-          autoComplete="email"
-          isRequired
-          isInvalid={!!f.errors.email || taken}
-          errorMessage={
-            taken ? (
-              <>
-                {t("auth.err.emailTaken")} <Link href="/connexion" className="underline">{t("auth.err.signInInstead")}</Link>
-              </>
-            ) : (
-              f.errors.email
-            )
-          }
-        />
+        <Input name="email" type="email" label={t("auth.workEmail")} autoComplete="email" isRequired isInvalid={!!f.errors.email} errorMessage={f.errors.email} />
         <PasswordField name="password" maxLength={128} label={t("auth.password")} hint={t("auth.passwordHint")} autoComplete="new-password" isRequired errorMessage={f.errors.password} />
         <Input name="companyName" maxLength={160} label={t("auth.companyName")} autoComplete="organization" isRequired isInvalid={!!f.errors.companyName} errorMessage={f.errors.companyName} />
         <SubmitButton pending={f.pending}>{t("auth.signUp")}</SubmitButton>
       </form>
       <p className="mt-6 text-center text-body-regular text-text-secondary">
         {t("auth.haveAccount")} <LinkButton href="/connexion">{t("auth.signIn")}</LinkButton>
+      </p>
+    </>
+  );
+}
+
+export function VerifyEmail({ token }: { token?: string }) {
+  const { t } = useI18n();
+  const [failed, setFailed] = useState(!token);
+  const started = useRef(false);
+  useEffect(() => {
+    if (!token || started.current) return;
+    started.current = true;
+    void verifyEmail(token).then((res) => {
+      if (res && !res.ok) setFailed(true);
+    });
+  }, [token]);
+
+  if (failed) {
+    return (
+      <>
+        <AuthHeading title={t("auth.verifyFailedTitle")} sub={t("auth.verifyFailedBody")} />
+        <LinkButton href="/inscription" variant="primary">{t("auth.backToSignUp")}</LinkButton>
+        <p className="mt-6 text-center">
+          <LinkButton href="/connexion" leadingIcon={RiArrowLeftLine}>{t("auth.backToSignIn")}</LinkButton>
+        </p>
+      </>
+    );
+  }
+  return (
+    <>
+      <AuthHeading title={t("auth.verifyingTitle")} sub={t("auth.verifyingBody")} />
+      <div className="flex justify-center py-6" aria-busy="true">
+        <BrandLoader size={48} label={t("auth.pending")} />
+      </div>
+    </>
+  );
+}
+
+export function MfaForm({ next }: { next?: string }) {
+  const { t } = useI18n();
+  const [recovery, setRecovery] = useState(false);
+  const [code, setCode] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const form = useRef<HTMLFormElement>(null);
+  const submitted = useRef("");
+
+  const submit = (value: string, isRecovery: boolean) => {
+    if (pending) return;
+    setError(null);
+    start(async () => {
+      const res = await verifyMfa(isRecovery ? { recoveryCode: value.trim() } : { code: value }, next);
+      if (res && !res.ok) {
+        setError(res.error.code === "INVALID_CODE" ? t(isRecovery ? "auth.err.invalidRecovery" : "auth.err.invalidCode") : t("auth.err.unavailable"));
+        if (!isRecovery) {
+          setCode("");
+          submitted.current = "";
+        }
+        form.current?.querySelector<HTMLInputElement>("input")?.focus();
+      }
+    });
+  };
+
+  const onCode = (raw: string) => {
+    const digits = raw.replace(/\D/g, "").slice(0, 6);
+    setCode(digits);
+    if (digits.length === 6 && submitted.current !== digits) {
+      submitted.current = digits;
+      submit(digits, false);
+    }
+  };
+
+  return (
+    <>
+      <AuthHeading title={recovery ? t("auth.mfaRecoveryTitle") : t("auth.mfaTitle")} sub={recovery ? t("auth.mfaRecoverySub") : t("auth.mfaSub")} />
+      <form
+        ref={form}
+        noValidate
+        className="flex flex-col gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (recovery ? recoveryCode.trim().length >= 8 : code.length === 6) submit(recovery ? recoveryCode : code, recovery);
+        }}
+      >
+        {error && <Notice tone="error">{error}</Notice>}
+        {recovery ? (
+          <Input
+            key="recovery"
+            autoFocus
+            label={t("auth.mfaRecoveryCode")}
+            value={recoveryCode}
+            onChange={setRecoveryCode}
+            autoComplete="off"
+            inputDir="ltr"
+            inputClassName="ident"
+            maxLength={40}
+          />
+        ) : (
+          <Input
+            key="code"
+            autoFocus
+            label={t("auth.mfaCode")}
+            value={code}
+            onChange={onCode}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]*"
+            maxLength={7}
+            inputDir="ltr"
+            inputClassName="ident tracking-[0.35em]"
+            placeholder="000000"
+          />
+        )}
+        <SubmitButton pending={pending}>{t("auth.mfaVerify")}</SubmitButton>
+      </form>
+      <p className="mt-6 text-center">
+        <LinkButton
+          onClick={() => {
+            setRecovery((r) => !r);
+            setError(null);
+          }}
+        >
+          {recovery ? t("auth.mfaUseApp") : t("auth.mfaUseRecovery")}
+        </LinkButton>
+      </p>
+      <p className="mt-3 text-center">
+        <LinkButton href="/connexion" leadingIcon={RiArrowLeftLine}>{t("auth.backToSignIn")}</LinkButton>
       </p>
     </>
   );

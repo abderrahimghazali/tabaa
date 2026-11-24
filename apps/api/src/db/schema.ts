@@ -1,10 +1,12 @@
 import {
+  boolean,
   date,
   index,
   integer,
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -106,6 +108,7 @@ export const invoices = pgTable(
     stampDuty: money('stamp_duty').notNull(),
     amountDue: money('amount_due').notNull(),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
+    retainUntil: date('retain_until', { mode: 'string' }),
     lines: jsonb('lines').$type<LineInput[]>().notNull(),
     snapshot: jsonb('snapshot').$type<{ customer: Party; totals: InvoiceTotals; seller: Company }>(),
   },
@@ -167,6 +170,8 @@ export const users = pgTable(
 export const tenants = pgTable('tenants', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
+  retainUntil: date('retain_until', { mode: 'string' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .notNull()
@@ -244,3 +249,58 @@ export const auditEvents = pgTable(
   },
   (t) => [index('audit_events_tenant_idx').on(t.tenantId, t.createdAt)],
 );
+
+export const pendingSignups = pgTable('pending_signups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull().unique(),
+  name: text('name').notNull(),
+  companyName: text('company_name').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const mfaAuthenticators = pgTable('mfa_authenticators', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  secret: text('secret').notNull(),
+  confirmed: boolean('confirmed').notNull(),
+  pendingSecret: text('pending_secret'),
+  lastUsedStep: integer('last_used_step'),
+});
+
+export const mfaRecoveryCodes = pgTable(
+  'mfa_recovery_codes',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.codeHash] })],
+);
+
+export const mfaFailures = pgTable(
+  'mfa_failures',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    failedAt: timestamp('failed_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('mfa_failures_user_idx').on(t.userId, t.failedAt)],
+);
+
+export const mfaChallenges = pgTable('mfa_challenges', {
+  id: text('id').primaryKey(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  tenantId: uuid('tenant_id').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

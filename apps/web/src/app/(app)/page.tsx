@@ -10,6 +10,7 @@ import { Echeancier } from "@/components/dashboard/echeancier";
 import { InvoicedCollectedChart } from "@/components/dashboard/invoiced-collected-chart";
 import { Kpis } from "@/components/dashboard/kpis";
 import { RecentInvoices, RecentPayments, TopCustomers } from "@/components/dashboard/lists";
+import { MfaPrompt } from "@/components/app/mfa-prompt";
 import { WriteOnly } from "@/components/app/write-only";
 import { TopbarActions } from "@/components/frame";
 
@@ -53,6 +54,8 @@ export default async function DashboardPage() {
           </>
         }
       />
+
+      <MfaPrompt />
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
         <Kpis d={d} />

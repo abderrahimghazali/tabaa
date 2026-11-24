@@ -20,6 +20,9 @@ export async function wipeTenant(tenantId: string) {
     const members = sql`select user_id from memberships where tenant_id = ${tenantId}`;
     await tx.execute(sql`delete from sessions where tenant_id = ${tenantId} or user_id in (${members})`);
     await tx.execute(sql`delete from email_tokens where user_id in (${members})`);
+    for (const t of ['mfa_authenticators', 'mfa_recovery_codes', 'mfa_failures', 'mfa_challenges']) {
+      await tx.execute(sql`delete from ${sql.identifier(t)} where user_id in (${members})`);
+    }
     for (const t of ['payments', 'invoices', 'numbering_sequences', 'items', 'parties', 'companies']) {
       await tx.execute(sql`delete from ${sql.identifier(t)} where tenant_id = ${tenantId}`);
     }

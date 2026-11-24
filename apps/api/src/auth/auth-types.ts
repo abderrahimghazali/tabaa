@@ -7,6 +7,7 @@ export interface AuthUser {
   tenantId: string;
   tenantName: string;
   role: Role;
+  mfaEnabled: boolean;
 }
 
 declare module '@nestjs/authentication' {

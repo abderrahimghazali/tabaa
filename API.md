@@ -46,6 +46,29 @@ Errors: non-2xx responses carry `ApiError` (`{ code, message, issues? }`).
 | DELETE | `/payments/:id` | | `Invoice` | Returns the updated invoice |
 | GET | `/dashboard` | | `Dashboard` | Includes 6-month series, aging buckets, top customers, last 8 invoices |
 
+## Accounts, email and two-factor
+
+Outgoing email goes through SMTP (`SMTP_URL`, `MAIL_FROM`). In development it lands in the local mail catcher: inbox at http://localhost:8125, API at http://localhost:8125/api/v1/messages.
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| POST | `/auth/sign-up` | `SignUpInput` | 202 `SignUpAccepted` | **Changed.** Always the same answer, no cookie. New email: stores a pending sign-up and emails a verification link (`WEB_URL/verification?token=…`, 24 h, single use). Existing email: emails a notice that an account already exists, with links to sign in and reset. Nothing is created until verification |
+| POST | `/auth/verify-email` | `VerifyEmailInput` | 201 `Me` + cookie | Creates the user, tenant and OWNER membership, signs in. 422 `INVALID_TOKEN` |
+| POST | `/auth/sign-in` | `SignInInput` | `SignInResult` | **Changed.** Without two-factor: `Me` + session cookie. With two-factor: `{ "mfaRequired": true }` and a short-lived httpOnly cookie `tabaa_mfa` (5 min) instead of a session |
+| POST | `/auth/mfa/verify` | `MfaVerifyInput` | `Me` + cookie | Needs `tabaa_mfa`. A TOTP code or one recovery code (single use). 401 `INVALID_CODE`; 5 failures invalidate the challenge |
+| POST | `/auth/mfa/setup` | | `MfaSetup` | Signed in. Starts enrolment; nothing is active yet |
+| POST | `/auth/mfa/enable` | `MfaEnableInput` | `RecoveryCodes` | Confirms enrolment with a code. Returns 10 recovery codes, shown once |
+| POST | `/auth/mfa/disable` | `Reauth` | 204 | Password and a current code |
+| POST | `/auth/mfa/recovery-codes` | `Reauth` | `RecoveryCodes` | Regenerates; old codes stop working |
+| POST | `/auth/password/forgot` | | 204 | Unchanged contract; the link is now emailed |
+| POST | `/tenant/close` | `CloseTenantInput` | 204 | OWNER only. `confirmName` must equal the tenant name. See retention below |
+
+- `Me.mfaEnabled` tells the interface whether two-factor is on.
+- Emails are sent for: verification, account-already-exists, password reset, password changed, two-factor enabled or disabled, workspace closed. French, with an Arabic version beneath.
+- **Closing a workspace.** Immediately: all sessions revoked, access blocked, user accounts of that workspace deleted (name, email, credentials, two-factor), drafts, catalogue and customers that appear on no issued invoice deleted. Kept, locked and unreachable through the API: issued invoices with their frozen seller and customer data, their payments, and the audit log with actor names replaced by a pseudonym. These are purged automatically once the legal retention period has passed (10 years after the end of the invoice's calendar year; value in the rule package). A daily job performs the purge.
+- Rate-limit counters use Redis when `REDIS_URL` is set (required when `NODE_ENV=production`), otherwise process memory.
+- Demo accounts created by the seed, all with the demo password: `demo@tabaa.ma` (OWNER), `membre@tabaa.ma` (MEMBER), `lecteur@tabaa.ma` (VIEWER).
+
 ## Security additions
 
 | Method | Path | Body | Returns | Notes |
