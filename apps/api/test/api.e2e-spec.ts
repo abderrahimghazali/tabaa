@@ -507,6 +507,11 @@ describe('security: configuration', () => {
           NODE_ENV: 'production',
           SMTP_URL: 'smtp://mail.example.com:587',
           REDIS_URL: 'redis://redis.example.com:6379',
+          // Production rejects the public example secrets before the seed guard is reached.
+          INTERNAL_API_TOKEN: 'x'.repeat(32),
+          MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+          APP_DATABASE_URL: process.env.APP_DATABASE_URL!.replace('change-me', 'ci'),
+          AUTH_DATABASE_URL: process.env.AUTH_DATABASE_URL!.replace('change-me', 'ci'),
         },
         stdio: 'pipe',
       });

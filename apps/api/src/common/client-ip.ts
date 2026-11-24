@@ -1,10 +1,13 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { env } from '../env.js';
 
-// Keyed digest only to give timingSafeEqual equal-length inputs; the key never leaves the process.
-const key = randomBytes(32);
-const digest = (s: string) => createHmac('sha256', key).update(s).digest();
+// Length is not secret; equal lengths are needed by timingSafeEqual.
+function sameToken(given: string, expected: string) {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 // X-Client-IP is only believed from the web server, which proves itself with the shared token.
 export function resolveClientIp(req: { headers: Record<string, unknown>; socket: { remoteAddress?: string } }) {
@@ -13,7 +16,7 @@ export function resolveClientIp(req: { headers: Record<string, unknown>; socket:
   if (
     typeof token === 'string' &&
     typeof forwarded === 'string' &&
-    timingSafeEqual(digest(token), digest(env.internalToken)) &&
+    sameToken(token, env.internalToken) &&
     isIP(forwarded.trim())
   ) {
     return forwarded.trim();
