@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="#2B3FD6" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+  <style>
+    .base { opacity: .18 }
+    .travel { stroke-dasharray: 35 65; animation: travel 2s linear infinite }
+    @keyframes travel { from { stroke-dashoffset: 100 } to { stroke-dashoffset: 0 } }
+    @media (prefers-reduced-motion: reduce) { .base { opacity: 1 } .travel { display: none } }
+  </style>
+  <g class="base"><path d="M11.5 4.5V24"/><path d="M4.5 24H19.5C24.6 24 28 21.2 28 17.2C28 10.6 17.6 9.4 11.5 15.6"/></g>
+  <g class="travel"><path pathLength="100" d="M11.5 4.5V24"/><path pathLength="100" d="M4.5 24H19.5C24.6 24 28 21.2 28 17.2C28 10.6 17.6 9.4 11.5 15.6"/></g>
+</svg>

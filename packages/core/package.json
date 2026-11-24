@@ -1,0 +1,27 @@
+{
+  "name": "@facture/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "decimal.js": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "fast-xml-parser": "^5.12.1",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

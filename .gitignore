@@ -1,0 +1,11 @@
+node_modules
+dist
+.next
+.turbo
+.env
+.DS_Store
+*.tsbuildinfo
+
+# Private reference material, not part of the product
+/docs/
+/SPEC.md

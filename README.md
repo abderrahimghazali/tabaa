@@ -1,0 +1,255 @@
+<p align="center">
+  <img src="brand/source/tabaa-logo-animated.svg" width="88" height="88" alt="Logo Tabaa">
+</p>
+
+<h1 align="center">Tabaa · طابع</h1>
+
+<p align="center">
+  <strong>Logiciel de facturation électronique pour le Maroc.</strong><br>
+  Factures conformes (ICE, IF, RC, TVA), encaissements, UBL 2.1, en français et en arabe.<br>
+  Conçu pour la réforme de la facture électronique de la DGI.
+</p>
+
+<p align="center">
+  <a href="#fonctionnalités">Fonctionnalités</a> ·
+  <a href="#conformité-marocaine">Conformité</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#démarrer">Démarrer</a> ·
+  <a href="#feuille-de-route">Feuille de route</a> ·
+  <a href="#english">English</a> ·
+  <a href="#العربية">العربية</a>
+</p>
+
+<p align="center">
+  <img src=".github/screenshots/dashboard.png" alt="Tableau de bord Tabaa : créances, retards, encaissements et TVA encaissée" width="900">
+</p>
+
+---
+
+## Pourquoi Tabaa
+
+Le Maroc prépare la généralisation de la **facture électronique** : chaque facture sera transmise à une plateforme de la Direction Générale des Impôts (DGI), validée, puis remise au client, au format structuré **UBL 2.1**. La base légale existe (article 145-IX du Code Général des Impôts) ; le décret d'application et les spécifications techniques ne sont pas encore publiés.
+
+Tabaa (طابع, « le cachet ») est un logiciel de facturation pensé pour cette transition :
+
+- il produit dès aujourd'hui des factures **complètes au regard du droit marocain** ;
+- il conserve chaque facture sous forme **structurée**, avec une sortie UBL 2.1 ;
+- il suit les **encaissements**, parce qu'au Maroc la TVA est due à l'encaissement ;
+- il isole le raccordement à la DGI derrière un connecteur, à écrire dès la publication des spécifications.
+
+> **État du projet.** Tabaa est un projet en développement actif. Il **n'est pas raccordé à la DGI** et **ne dispose d'aucun agrément ni d'aucune certification** : aucun dispositif d'agrément des logiciels de facturation n'a été publié à ce jour. Les valeurs réglementaires (taux, délais, seuils) sont à faire valider par un expert-comptable avant tout usage réel.
+
+## Fonctionnalités
+
+| | |
+|---|---|
+| **Factures** | Brouillon avec aperçu A4 en direct, émission avec numérotation continue (`FA-2026-00001`), avoirs, acomptes |
+| **Immuabilité** | Une facture émise ne peut plus être modifiée : la base de données elle-même refuse la modification |
+| **Mentions légales** | ICE, IF, RC et tribunal, taxe professionnelle, CNSS, montant en toutes lettres en français et en arabe |
+| **Contrôles avant émission** | ICE du client obligatoire pour une entreprise, cohérence des totaux, taux de TVA autorisés, échéance |
+| **Encaissements** | Paiements partiels, statut payé / partiellement payé / en retard, TVA encaissée du mois |
+| **Tableau de bord** | Créances par ancienneté, facturé et encaissé sur six mois, délai moyen de paiement, échéancier |
+| **UBL 2.1** | Export XML de chaque facture émise |
+| **Clients et catalogue** | Fiche client avec encours, articles et services avec taux de TVA |
+| **Comptes et espaces** | Inscription, connexion, réinitialisation du mot de passe ; un espace isolé par entreprise |
+| **Deux langues** | Interface en français et en arabe, avec mise en page de droite à gauche |
+
+<p align="center">
+  <img src=".github/screenshots/facture.png" alt="Facture émise avec son cachet, ses encaissements et son activité" width="900">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src=".github/screenshots/factures.png" alt="Liste des factures avec filtres, statuts et reste dû"></td>
+    <td width="50%"><img src=".github/screenshots/editeur.png" alt="Éditeur de facture avec aperçu en direct"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Liste des factures</sub></td>
+    <td align="center"><sub>Éditeur avec aperçu en direct</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src=".github/screenshots/dashboard-ar.png" alt="لوحة القيادة باللغة العربية" width="900"><br>
+  <sub>La même interface en arabe</sub>
+</p>
+
+## Conformité marocaine
+
+| Exigence | Référence | État dans Tabaa |
+|---|---|---|
+| Mentions obligatoires sur la facture | CGI art. 145 | Fait |
+| ICE du vendeur et du client | CGI art. 145 | Fait (contrôle de longueur ; clé de contrôle à vérifier) |
+| Numérotation continue | CGI art. 145-III | Fait |
+| TVA à l'encaissement | CGI | Suivi des encaissements fait ; préparation de la déclaration prévue |
+| Droit de timbre sur paiement en espèces | CGI | Fait (taux à valider) |
+| Délais de paiement | Loi 69-21 | Échéance par défaut et alerte faites ; déclaration prévue |
+| Format structuré | UBL 2.1 | Fait (profil marocain en attente de publication) |
+| Retenue à la source de TVA | CGI art. 117 | Prévu |
+| Relevé de déductions de TVA | SIMPL-TVA | Prévu |
+| Conservation dix ans | CGI art. 211 | Prévu (archivage scellé) |
+| Transmission à la plateforme DGI | CGI art. 145-IX | En attente des spécifications |
+
+Le détail, avec le niveau de certitude de chaque règle et les points à vérifier, est dans [`SPEC-MAROC.md`](SPEC-MAROC.md).
+
+### Le circuit visé par la réforme
+
+Ce schéma décrit le fonctionnement annoncé. Il reste à confirmer par les textes.
+
+```mermaid
+flowchart LR
+    V["Vendeur"] --> T["Tabaa"]
+    T -- "1. Facture UBL 2.1" --> D["Plateforme DGI"]
+    D -- "2. Validée ou rejetée" --> T
+    D -- "3. Facture validée" --> A["Acheteur"]
+    A -- "4. Accusé, acceptation ou litige" --> D
+    D -- "5. Statuts" --> T
+    T -- "6. Données de paiement" --> D
+```
+
+### Le cycle de vie d'une facture
+
+```mermaid
+stateDiagram-v2
+    [*] --> Brouillon
+    Brouillon --> Emise: Émettre (numéro attribué, facture figée)
+    Emise --> PartiellementPayee: Encaissement partiel
+    Emise --> Payee: Encaissement total
+    PartiellementPayee --> Payee: Solde encaissé
+    Emise --> EnRetard: Échéance dépassée
+    EnRetard --> Payee: Encaissement
+    Emise --> Avoir: Correction par avoir
+    Payee --> [*]
+    Avoir --> [*]
+```
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Web["apps/web : Next.js"]
+        UI["Interface français / arabe"]
+        SF["Fonctions serveur"]
+    end
+    subgraph API["apps/api : NestJS"]
+        AUTH["Comptes et sessions"]
+        INV["Factures, paiements, tableau de bord"]
+    end
+    subgraph Core["packages/core : TypeScript pur"]
+        CALC["Calcul des totaux et de la TVA"]
+        VAL["Contrôles avant émission"]
+        UBL["Génération UBL 2.1"]
+        WORDS["Montant en lettres FR / AR"]
+        RULES["Règles datées : taux, délais"]
+    end
+    PG[("PostgreSQL : isolation par ligne")]
+
+    UI --> SF --> API
+    UI --> Core
+    API --> Core
+    AUTH --> PG
+    INV --> PG
+```
+
+- **Un seul modèle de facture.** L'aperçu à l'écran, les contrôles, le calcul et l'UBL partent des mêmes données et du même code (`packages/core`).
+- **Les règles sont des données.** Taux de TVA, délais légaux et droit de timbre vivent dans un fichier de règles daté, pas dans la logique.
+- **Isolation des entreprises dans la base.** Chaque table porte l'identifiant de l'espace et PostgreSQL applique la sécurité au niveau des lignes. Les données de connexion sont lues par un rôle de base distinct.
+- **Montants sans virgule flottante.** Décimaux de bout en bout.
+
+| Couche | Choix |
+|---|---|
+| Interface | Next.js, React, Tailwind CSS, composants [BoardUI](https://www.boardui.com) |
+| API | NestJS, validation par schémas Zod partagés |
+| Données | PostgreSQL, Drizzle ORM, sécurité au niveau des lignes |
+| Domaine | TypeScript pur, testé avec Vitest |
+| Outillage | pnpm, Turborepo, Docker pour la base |
+
+## Démarrer
+
+Prérequis : Node.js 22, pnpm 10, Docker.
+
+```bash
+git clone https://github.com/abderrahimghazali/tabaa.git
+cd tabaa
+pnpm install
+cp .env.example .env            # puis remplacer AUTH_SECRET par une valeur aléatoire
+
+pnpm db:up                      # PostgreSQL sur le port 5433
+pnpm --filter @facture/core build
+pnpm --filter api db:migrate
+pnpm --filter api db:seed       # données de démonstration
+
+pnpm dev                        # interface sur http://localhost:3100, API sur http://localhost:4100
+```
+
+Compte de démonstration créé par le jeu de données : `demo@tabaa.ma` / `tabaa-demo-2026`.
+
+Sans fournisseur d'e-mail configuré, le lien de réinitialisation du mot de passe est écrit dans le journal de l'API en développement.
+
+```bash
+pnpm --filter @facture/core test   # logique métier
+pnpm --filter api test:e2e         # API, sur la base réelle
+```
+
+Le contrat HTTP est décrit dans [`API.md`](API.md).
+
+## Feuille de route
+
+```mermaid
+gantt
+    title Feuille de route
+    dateFormat YYYY-MM-DD
+    axisFormat %b %Y
+    section Fait
+    Factures, avoirs, numérotation, UBL      :done, 2026-11-24, 3d
+    Encaissements et tableau de bord         :done, 2026-11-24, 3d
+    Comptes, connexion, isolation            :done, 2026-11-24, 3d
+    section Ensuite
+    PDF archivable et envoi au client        :2026-12-01, 3w
+    Équipe, rôles, accès expert-comptable    :2026-12-15, 3w
+    Import bancaire et rapprochement         :2027-01-05, 5w
+    TVA, retenue à la source, relevés        :2027-01-26, 6w
+    Délais de paiement, loi 69-21            :2027-02-16, 5w
+    Factures d'achat et validation           :2027-03-09, 8w
+    section DGI
+    Connecteur, à la publication des spécifications :milestone, 2027-06-01, 0d
+```
+
+Les dates sont indicatives. Le connecteur DGI dépend de la publication des spécifications, pas d'une date.
+
+## Questions fréquentes
+
+**La facture électronique est-elle obligatoire au Maroc ?**
+Le principe est inscrit dans le Code Général des Impôts (article 145-IX). Sa mise en œuvre attend un décret d'application, qui n'était pas publié au Bulletin officiel en novembre 2026. Le déploiement annoncé est progressif, en commençant par les grandes entreprises.
+
+**Quel format de facture électronique la DGI a-t-elle retenu ?**
+Les annonces mentionnent le XML UBL 2.1. Le profil marocain détaillé n'est pas publié. Tabaa produit de l'UBL 2.1 et adaptera son profil dès la publication.
+
+**Qu'est-ce que l'ICE ?**
+L'Identifiant Commun de l'Entreprise, un numéro de quinze chiffres. Il doit figurer sur les factures, pour le vendeur comme pour le client professionnel.
+
+**Tabaa est-il agréé par l'État ?**
+Non. Aucun dispositif d'agrément ou de certification des logiciels de facturation n'a été publié à ce jour. Tabaa suivra la procédure dès qu'elle existera.
+
+**Tabaa remplace-t-il un expert-comptable ?**
+Non. Il prépare et structure les données ; les règles fiscales appliquées doivent être validées par un professionnel.
+
+## English
+
+Tabaa is an e-invoicing application for Morocco. It issues invoices that carry the Moroccan mandatory mentions (ICE, IF, RC, VAT), locks them once issued, tracks payments (Moroccan VAT is due on receipt), exports UBL 2.1, and runs in French and Arabic with right-to-left layout.
+
+Morocco's e-invoicing mandate has a legal basis but its implementing decree and technical specifications are not yet published. Tabaa is **not connected to the tax administration's platform and holds no state approval**; the DGI connector will be written when the specification is released. See [`SPEC-MAROC.md`](SPEC-MAROC.md) for the full technical specification and the list of points still to verify.
+
+## العربية
+
+«طابع» برنامج للفوترة الإلكترونية بالمغرب: فواتير تتضمن البيانات الإلزامية (التعريف الموحد للمقاولة، التعريف الضريبي، السجل التجاري، الضريبة على القيمة المضافة)، تتبّع التحصيلات، وتصدير بصيغة UBL 2.1، بواجهة عربية وفرنسية.
+
+المشروع قيد التطوير، وهو غير مرتبط بمنصة المديرية العامة للضرائب ولا يتوفر على أي اعتماد رسمي إلى حدود اليوم.
+
+## Marque
+
+Le logo, ses variantes et l'animation de chargement sont dans [`brand/`](brand/).
+
+## Licence
+
+Aucune licence n'est encore définie pour ce dépôt. Les composants d'interface proviennent de BoardUI et restent soumis à leur propre licence.
