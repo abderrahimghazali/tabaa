@@ -4,6 +4,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useRouter } from "next/navigation";
 import {
   RiAddLine,
+  RiArrowDownLine,
+  RiArrowUpLine,
+  RiCornerDownLeftLine,
   RiBox3Line,
   RiBuilding2Line,
   RiFileList3Line,
@@ -11,6 +14,7 @@ import {
   RiHome5Line,
   RiSettings4Line,
 } from "@remixicon/react";
+import { Kbd } from "@/components/base/kbd/kbd";
 import { CommandPalette, CommandPaletteItem, CommandPaletteSection } from "@/components/base/command-palette/command-palette";
 import { searchAll } from "@/lib/actions";
 import { fmtNumber, groupDigits, ICE_GROUPS } from "@/lib/format";
@@ -94,9 +98,22 @@ export function CommandPaletteHost({ children }: { children: React.ReactNode }) 
         placeholder={t("palette.placeholder")}
         emptyState={t("palette.empty")}
         onAction={(key) => router.push(String(key))}
+        footer={
+          <>
+            <span className="flex items-center gap-1.5">
+              <Kbd aria-label="↑"><RiArrowUpLine className="size-3" aria-hidden /></Kbd>
+              <Kbd aria-label="↓"><RiArrowDownLine className="size-3" aria-hidden /></Kbd>
+              {t("palette.navigate")}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Kbd aria-label="Entrée"><RiCornerDownLeftLine className="size-3" aria-hidden /></Kbd>
+              {t("palette.select")}
+            </span>
+          </>
+        }
       >
         {remote.invoices.length > 0 && (
-          <CommandPaletteSection title={t("palette.invoices")}>
+          <CommandPaletteSection key="invoices" title={t("palette.invoices")}>
             {remote.invoices.map((i) => (
               <CommandPaletteItem key={i.id} id={i.id} icon={RiFileList3Line} description={i.description}>
                 {i.label}
@@ -105,7 +122,7 @@ export function CommandPaletteHost({ children }: { children: React.ReactNode }) 
           </CommandPaletteSection>
         )}
         {remote.parties.length > 0 && (
-          <CommandPaletteSection title={t("palette.customers")}>
+          <CommandPaletteSection key="customers" title={t("palette.customers")}>
             {remote.parties.map((p) => (
               <CommandPaletteItem key={p.id} id={p.id} icon={RiGroupLine} description={p.description}>
                 {p.label}
@@ -114,7 +131,7 @@ export function CommandPaletteHost({ children }: { children: React.ReactNode }) 
           </CommandPaletteSection>
         )}
         {actions.length > 0 && (
-          <CommandPaletteSection title={t("palette.actions")}>
+          <CommandPaletteSection key="actions" title={t("palette.actions")}>
             {actions.map((a) => (
               <CommandPaletteItem key={a.id} id={a.id} icon={a.icon}>
                 {a.label}

@@ -3,8 +3,8 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { RiAddLine, RiDeleteBinLine, RiDownload2Line, RiEditLine, RiPrinterLine } from "@remixicon/react";
-import { PaymentMethod, type ApiError, type Company, type Invoice } from "@facture/core";
+import { RiAddLine, RiCloseCircleLine, RiDeleteBinLine, RiDownload2Line, RiEditLine, RiPrinterLine } from "@remixicon/react";
+import { PaymentMethod, type ApiError, type Invoice } from "@facture/core";
 import { Card, PageHeader } from "@/components/app/layout";
 import { Money } from "@/components/app/money";
 import { Chip } from "@/components/base/badges/chip";
@@ -21,7 +21,7 @@ import { IssueList } from "@/components/ui/issue-list";
 import { addPayment, createCreditNote, deleteInvoice, issueInvoice, removePayment } from "@/lib/actions";
 import { fmtDate, fmtNumber, sub } from "@/lib/format";
 import { useI18n } from "@/lib/i18n-client";
-import { useCanWrite } from "@/lib/me-client";
+import { useCanAdmin, useCanWrite } from "@/lib/me-client";
 import { issuesAt } from "@/lib/result";
 import { statusOf } from "@/lib/status";
 import { cx } from "@/utils/cx";
@@ -37,12 +37,10 @@ const DOT = { neutral: "bg-foreground-icon-tertiary", accent: "bg-accent-500", o
 
 export function InvoiceDetail({
   invoice,
-  company,
   today,
   openPayment,
 }: {
   invoice: Invoice;
-  company: Company;
   today: string;
   openPayment?: boolean;
 }) {
@@ -59,13 +57,15 @@ export function InvoiceDetail({
   const isCredit = invoice.type === "CREDIT_NOTE";
   const remaining = sub(invoice.totals.amountDue, invoice.paidAmount);
   const canWrite = useCanWrite();
+  const canAdmin = useCanAdmin();
   const open = !isDraft && !isCredit && Number(remaining) > 0;
   const canPay = open && canWrite;
   const paidPct = Math.min(100, (Number(invoice.paidAmount) / Math.max(1, Number(invoice.totals.amountDue))) * 100);
   const due = dueInfo(invoice.dueDate, today, t, locale);
 
   const model: SheetModel = {
-    company,
+    // The seller block, footer, RIB and cachet come from the company frozen at issuance, never the live company.
+    company: invoice.seller,
     customer: invoice.customer,
     number: invoice.number,
     type: invoice.type,
@@ -132,14 +132,14 @@ export function InvoiceDetail({
           router.push(`/factures/${cn.id}/modifier`);
         },
       );
-    return run(() => removePayment(c.payment), () => toast.success(t("payment.removedToast")));
+    return run(() => removePayment(c.payment), () => toast.success(t("payment.voidedToast")));
   };
 
   const confirmText = {
     issue: { title: t("invoice.issueConfirmTitle"), body: t("invoice.issueConfirmBody"), label: t("invoice.issue"), danger: false },
     delete: { title: t("invoice.deleteConfirmTitle"), body: t("invoice.deleteConfirmBody"), label: t("invoice.delete"), danger: true },
     credit: { title: t("invoice.creditConfirmTitle"), body: t("invoice.creditConfirmBody"), label: t("invoice.credit"), danger: false },
-    payment: { title: t("payment.removeConfirmTitle"), body: t("payment.removeConfirmBody"), label: t("payment.remove"), danger: true },
+    payment: { title: t("payment.voidConfirmTitle"), body: t("payment.voidConfirmBody"), label: t("payment.void"), danger: true },
   };
   const ct = confirm ? confirmText[typeof confirm === "string" ? confirm : "payment"] : null;
 
@@ -262,7 +262,7 @@ export function InvoiceDetail({
                           {p.reference && <> · <span className="ident">{p.reference}</span></>}
                         </div>
                       </div>
-                      <IconButton icon={RiDeleteBinLine} size="small" aria-label={t("payment.remove")} onClick={() => setConfirm({ payment: p.id })} disabled={busy} className={canWrite ? undefined : "hidden"} />
+                      {canAdmin && <IconButton icon={RiCloseCircleLine} size="small" aria-label={t("payment.void")} onClick={() => setConfirm({ payment: p.id })} disabled={busy} />}
                     </li>
                   ))}
                 </ul>
@@ -290,7 +290,7 @@ export function InvoiceDetail({
             </ol>
           </Card>
 
-          {canWrite && (isDraft || !isCredit) && (
+          {((isDraft && canAdmin) || (canWrite && !isDraft && !isCredit)) && (
             <Card className="p-3">
               {isDraft ? (
                 <Button variant="danger" className="w-full" leadingIcon={RiDeleteBinLine} onClick={() => setConfirm("delete")} disabled={busy}>

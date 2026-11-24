@@ -4,21 +4,17 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { ApiError, type ForgotPasswordInput, type ResetPasswordInput, type SignInInput, type SignUpInput } from "@facture/core";
 import { SESSION_COOKIE, safeNext } from "./session";
+import { apiRoot, upstreamHeaders } from "./upstream";
 import type { Result } from "./result";
 
-const ROOT = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4100").replace(/\/v1\/?$/, "");
 
 async function post(path: string, body?: unknown): Promise<{ res: Response; error?: ApiError }> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
   let res: Response;
   try {
-    res = await fetch(`${ROOT}/v1${path}`, {
+    res = await fetch(`${apiRoot()}/v1${path}`, {
       method: "POST",
       cache: "no-store",
-      headers: {
-        ...(body !== undefined && { "content-type": "application/json" }),
-        ...(token && { cookie: `${SESSION_COOKIE}=${token}` }),
-      },
+      headers: await upstreamHeaders(body !== undefined),
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -42,7 +38,7 @@ async function forwardSession(res: Response) {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV !== "development",
     ...(maxAge ? { maxAge: Number(maxAge) } : expires ? { expires: new Date(expires) } : {}),
   });
 }
@@ -73,6 +69,12 @@ export async function resetPassword(input: ResetPasswordInput): Promise<Result<n
 
 export async function signOut(): Promise<void> {
   await post("/auth/sign-out");
+  (await cookies()).delete(SESSION_COOKIE);
+  redirect("/connexion");
+}
+
+export async function signOutAll(): Promise<void> {
+  await post("/auth/sign-out-all");
   (await cookies()).delete(SESSION_COOKIE);
   redirect("/connexion");
 }

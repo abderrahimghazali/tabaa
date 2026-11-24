@@ -15,6 +15,7 @@
   <a href="#conformité-marocaine">Conformité</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#démarrer">Démarrer</a> ·
+  <a href="#sécurité">Sécurité</a> ·
   <a href="#feuille-de-route">Feuille de route</a> ·
   <a href="#english">English</a> ·
   <a href="#العربية">العربية</a>
@@ -170,7 +171,7 @@ Prérequis : Node.js 22, pnpm 10, Docker.
 git clone https://github.com/abderrahimghazali/tabaa.git
 cd tabaa
 pnpm install
-cp .env.example .env            # puis remplacer AUTH_SECRET par une valeur aléatoire
+cp .env.example .env            # puis remplacer les trois valeurs « change-me » par des valeurs aléatoires
 
 pnpm db:up                      # PostgreSQL sur le port 5433
 pnpm --filter @facture/core build
@@ -190,6 +191,27 @@ pnpm --filter api test:e2e         # API, sur la base réelle
 ```
 
 Le contrat HTTP est décrit dans [`API.md`](API.md).
+
+## Sécurité
+
+Tabaa traite des pièces comptables, des identifiants fiscaux et des données personnelles. Les mesures techniques suivantes sont en place et couvertes par des tests automatisés ; elles suivent les contrôles techniques de l'annexe A de la norme ISO/IEC 27001:2022.
+
+| Domaine | Mesure |
+|---|---|
+| Cloisonnement | Sécurité au niveau des lignes forcée sur chaque table d'un espace ; un test échoue si une table en est dépourvue |
+| Moindre privilège | Trois rôles de base de données distincts : migrations, requêtes métier, authentification. Le rôle métier ne peut pas lire les comptes ni les sessions |
+| Authentification | Mots de passe hachés avec scrypt, sessions côté serveur révocables, cookie `HttpOnly`, `Secure`, `SameSite=Lax`, expiration après 8 heures d'inactivité et 14 jours au plus, déconnexion de tous les appareils |
+| Contrôle d'accès | Rôles propriétaire, administrateur, membre, lecteur, vérifiés par l'API |
+| Journal d'activité | Journal en ajout seul des connexions, refus d'accès et modifications ; la base rejette toute modification ou suppression d'une entrée |
+| Intégrité des pièces | Facture émise figée avec les coordonnées du vendeur et du client ; encaissements annulés, jamais supprimés |
+| Protection du web | Politique de sécurité du contenu avec nonce, en-têtes de sécurité, vérification de l'origine des requêtes, limitation du nombre de tentatives de connexion |
+| Entrées | Validation par schéma de chaque requête, tailles bornées, requêtes SQL paramétrées |
+| Configuration | Aucun secret dans le dépôt ; l'API refuse de démarrer si un réglage requis manque |
+| Chaîne logicielle | Versions verrouillées, audit des dépendances, analyse CodeQL et mises à jour Dependabot à chaque modification |
+
+> Tabaa **n'est pas certifié ISO 27001**. Cette norme certifie le système de management de la sécurité d'une organisation, à l'issue d'un audit ; aucun logiciel ne peut l'être par son seul code. Restent à la charge de l'exploitant, notamment : la double authentification (prévue), l'envoi des e-mails de réinitialisation, les sauvegardes et leur restauration, le chiffrement et le TLS de l'hébergement, la gestion des secrets, la supervision, et les démarches auprès de la CNDP (loi 09-08).
+
+Pour signaler une faille, voir [`SECURITY.md`](SECURITY.md).
 
 ## Feuille de route
 

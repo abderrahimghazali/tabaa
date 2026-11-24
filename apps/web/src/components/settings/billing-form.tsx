@@ -10,9 +10,9 @@ import { TopbarActions } from "@/components/frame";
 import { IssueList } from "@/components/ui/issue-list";
 import { saveCompany } from "@/lib/actions";
 import { todayIso } from "@/lib/format";
-import { WriteOnly } from "@/components/app/write-only";
+import { AdminOnly } from "@/components/app/write-only";
 import { useI18n } from "@/lib/i18n-client";
-import { useCanWrite } from "@/lib/me-client";
+import { useCanAdmin } from "@/lib/me-client";
 import { issuesAt } from "@/lib/result";
 import { Section } from "./section";
 
@@ -26,7 +26,7 @@ function toInput(c: Company, patch: Partial<CompanyInput>): CompanyInput {
 
 export function BillingForm({ company }: { company: Company }) {
   const { t } = useI18n();
-  const canWrite = useCanWrite();
+  const canWrite = useCanAdmin();
   const [pending, start] = useTransition();
   const [error, setError] = useState<ApiError | null>(null);
   const today = todayIso();
@@ -51,11 +51,11 @@ export function BillingForm({ company }: { company: Company }) {
   return (
     <div>
       <TopbarActions>
-        <WriteOnly>
+        <AdminOnly>
           <Button type="submit" form="billing-form" disabled={pending}>
             {t("common.save")}
           </Button>
-        </WriteOnly>
+        </AdminOnly>
       </TopbarActions>
       <form id="billing-form" inert={!canWrite || undefined}  onSubmit={submit} noValidate className="grid max-w-3xl gap-4">
         <IssueList error={error} />

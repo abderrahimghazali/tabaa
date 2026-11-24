@@ -1,32 +1,40 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { z } from 'zod';
 
 const file = resolve(import.meta.dirname, '../../../.env');
 if (existsSync(file)) process.loadEnvFile(file);
 
-const adminUrl = process.env.DATABASE_URL ?? '';
+const url = z.string().min(1).pipe(z.url());
 
-function appUrl() {
-  if (process.env.APP_DATABASE_URL) return process.env.APP_DATABASE_URL;
-  const url = new URL(adminUrl);
-  url.username = 'facture_app';
-  url.password = 'facture_app';
-  return url.toString();
+const Schema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']),
+  DATABASE_URL: url,
+  APP_DATABASE_URL: url,
+  AUTH_DATABASE_URL: url,
+  WEB_URL: url,
+  INTERNAL_API_TOKEN: z.string().min(16),
+  API_PORT: z.coerce.number().int().default(4100),
+  DEV_TENANT_ID: z.string().optional(),
+});
+
+export function parseEnv(source: Record<string, string | undefined>) {
+  const parsed = Schema.safeParse(source);
+  if (!parsed.success) {
+    const lines = parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`);
+    throw new Error(`Invalid environment, the API cannot start:\n${lines.join('\n')}`);
+  }
+  const e = parsed.data;
+  return {
+    nodeEnv: e.NODE_ENV,
+    adminUrl: e.DATABASE_URL,
+    appUrl: e.APP_DATABASE_URL,
+    authUrl: e.AUTH_DATABASE_URL,
+    webUrl: e.WEB_URL,
+    internalToken: e.INTERNAL_API_TOKEN,
+    port: e.API_PORT,
+    tenantId: e.DEV_TENANT_ID ?? '',
+  };
 }
 
-function authUrl() {
-  if (process.env.AUTH_DATABASE_URL) return process.env.AUTH_DATABASE_URL;
-  const url = new URL(adminUrl);
-  url.username = 'facture_auth';
-  url.password = 'facture_auth';
-  return url.toString();
-}
-
-export const env = {
-  adminUrl,
-  appUrl: appUrl(),
-  authUrl: authUrl(),
-  webUrl: process.env.WEB_URL ?? 'http://localhost:3100',
-  tenantId: process.env.DEV_TENANT_ID ?? '',
-  port: Number(process.env.API_PORT ?? 4100),
-};
+export const env = parseEnv(process.env);

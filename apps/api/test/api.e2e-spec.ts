@@ -8,7 +8,12 @@ const { AppModule } = await import('../src/app.module.js');
 const { setup } = await import('../src/setup.js');
 const { Dashboard } = await import('@facture/core');
 const { Decimal } = await import('decimal.js');
-const { env } = await import('../src/env.js');
+const { env, parseEnv } = await import('../src/env.js');
+const { PasswordResetMailer } = await import('../src/auth/auth.service.js');
+const policy = await import('../src/auth/security-policy.js');
+const { AuditEvent } = await import('@facture/core');
+const { execFileSync } = await import('node:child_process');
+const { readdirSync, readFileSync } = await import('node:fs');
 const { wipeTenant } = await import('../src/db/wipe.js');
 
 const company = {
@@ -36,6 +41,7 @@ let appPool: Pool;
 let customerId: string;
 let anon: ReturnType<typeof request>;
 let TENANT: string;
+let meUser: { id: string };
 const tenantIds: string[] = [];
 const PASSWORD = 'correct-horse-battery';
 const uniqueEmail = (tag: string) => `${tag}-${Math.random().toString(36).slice(2, 10)}@example.test`;
@@ -60,6 +66,7 @@ beforeAll(async () => {
   const me = await signUp(http);
   expect(me.status).toBe(201);
   TENANT = me.body.tenant.id;
+  meUser = me.body.user;
   admin = new Pool({ connectionString: env.adminUrl });
   appPool = new Pool({ connectionString: env.appUrl });
 });
@@ -153,18 +160,19 @@ describe('auth', () => {
     const res = await signUp(agent as never, email);
     const cookie = (res.headers['set-cookie'] as unknown as string[])[0].split(';')[0];
 
-    const lines: string[] = [];
-    const spy = vi.spyOn(Logger.prototype, 'log').mockImplementation((m: unknown) => void lines.push(String(m)));
+    const send = vi.spyOn(PasswordResetMailer.prototype, 'send');
+    const logged = vi.spyOn(Logger.prototype, 'log');
     await anon.post('/v1/auth/password/forgot').send({ email }).expect(204);
     await anon.post('/v1/auth/password/forgot').send({ email: uniqueEmail('nobody') }).expect(204);
-    let line: string | undefined;
-    for (let i = 0; i < 40 && !line; i++) {
-      line = lines.find((l) => l.startsWith(`Password reset link for ${email}:`));
-      if (!line) await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 40 && !send.mock.calls.some(([l]) => l.email === email); i++) {
+      await new Promise((r) => setTimeout(r, 50));
     }
-    spy.mockRestore();
-    const token = new URL(line!.split(': ').slice(1).join(': ')).searchParams.get('token')!;
-    expect(line).toContain('/reinitialiser?token=');
+    const link = send.mock.calls.map(([l]) => l).find((l) => l.email === email)!;
+    expect(logged.mock.calls.some(([m]) => String(m).includes('Password reset link'))).toBe(false);
+    send.mockRestore();
+    logged.mockRestore();
+    const token = new URL(link.url).searchParams.get('token')!;
+    expect(link.url).toContain('/reinitialiser?token=');
 
     const newPassword = 'another-long-password';
     await anon.post('/v1/auth/password/reset').send({ token, password: newPassword }).expect(204);
@@ -395,5 +403,322 @@ describe('row-level security', () => {
   it('hides rows from other tenants', async () => {
     expect(await count(TENANT)).toBeGreaterThan(0);
     expect(await count('00000000-0000-4000-8000-0000000000ff')).toBe(0);
+  });
+});
+
+const asRole = async (role: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER') => {
+  const agent = request.agent(app.getHttpServer());
+  const res = await signUp(agent as never);
+  await admin.query('update memberships set role = $1 where user_id = $2', [role, res.body.user.id]);
+  return { agent, me: res.body };
+};
+
+const events = async (tenant: string, action: string) =>
+  (await admin.query('select * from audit_events where tenant_id = $1 and action = $2 order by created_at', [tenant, action])).rows;
+
+describe('security: configuration', () => {
+  const valid = {
+    NODE_ENV: 'development',
+    DATABASE_URL: 'postgres://a:b@localhost:5433/x',
+    APP_DATABASE_URL: 'postgres://a:b@localhost:5433/x',
+    AUTH_DATABASE_URL: 'postgres://a:b@localhost:5433/x',
+    WEB_URL: 'http://localhost:3100',
+    INTERNAL_API_TOKEN: 'x'.repeat(32),
+  };
+
+  it('refuses to boot when required variables are missing', () => {
+    expect(() => parseEnv({})).toThrow(/NODE_ENV[\s\S]*INTERNAL_API_TOKEN/);
+    expect(parseEnv(valid).port).toBe(4100);
+    for (const key of Object.keys(valid)) {
+      expect(() => parseEnv({ ...valid, [key]: undefined })).toThrow(key);
+    }
+  });
+
+  it('is secure unless explicitly relaxed', () => {
+    expect(policy.cookieSecure('production')).toBe(true);
+    expect(policy.cookieSecure('development')).toBe(false);
+    expect(policy.logResetLinks('production')).toBe(false);
+    expect(policy.logResetLinks('test')).toBe(false);
+    expect(policy.logResetLinks('development')).toBe(true);
+    expect(policy.scryptLogN('production')).toBe(17);
+    expect(policy.scryptLogN('development')).toBe(17);
+    expect(policy.scryptLogN('test')).toBeLessThan(17);
+  });
+
+  it('runs against a *_test database', () => {
+    expect(new URL(env.adminUrl).pathname).toMatch(/_test$/);
+    expect(new URL(env.appUrl).pathname).toMatch(/_test$/);
+  });
+
+  it('keeps passwords out of migrations while the roles can log in', async () => {
+    for (const dir of readdirSync('./drizzle', { withFileTypes: true }).filter((d) => d.isDirectory())) {
+      const sql = readFileSync(`./drizzle/${dir.name}/migration.sql`, 'utf8');
+      expect(sql).not.toMatch(/PASSWORD\s+'/i);
+    }
+    const auth = new Pool({ connectionString: env.authUrl });
+    expect((await auth.query('select 1 as ok')).rows[0].ok).toBe(1);
+    expect((await appPool.query('select 1 as ok')).rows[0].ok).toBe(1);
+    await auth.end();
+  });
+
+  it('refuses to seed outside development', () => {
+    const run = () =>
+      execFileSync('pnpm', ['exec', 'tsx', 'src/seed.ts'], {
+        env: { ...process.env, NODE_ENV: 'production' },
+        stdio: 'pipe',
+      });
+    expect(run).toThrow(/Refusing to run/);
+  });
+});
+
+describe('security: http', () => {
+  it('sets security headers and no-store', async () => {
+    const res = await anon.get('/v1/me');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    expect(res.headers['cross-origin-resource-policy']).toBeTruthy();
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers['x-powered-by']).toBeUndefined();
+    expect(res.headers['strict-transport-security']).toBeTruthy();
+  });
+
+  it('honours X-Client-IP only with the internal token', async () => {
+    const email = uniqueEmail('ip');
+    const res = await signUp(anon, email);
+    const tenant = res.body.tenant.id;
+    await anon.post('/v1/auth/sign-in').set('X-Client-IP', '203.0.113.9').send({ email, password: PASSWORD }).expect(200);
+    await anon
+      .post('/v1/auth/sign-in')
+      .set('X-Client-IP', '203.0.113.10')
+      .set('X-Internal-Token', 'wrong-token-wrong-token')
+      .send({ email, password: PASSWORD })
+      .expect(200);
+    await anon
+      .post('/v1/auth/sign-in')
+      .set('X-Client-IP', '203.0.113.11')
+      .set('X-Internal-Token', env.internalToken)
+      .send({ email, password: PASSWORD })
+      .expect(200);
+    const ips = (await events(tenant, 'auth.sign_in')).map((e) => e.ip);
+    expect(ips).toHaveLength(3);
+    expect(ips[0]).not.toBe('203.0.113.9');
+    expect(ips[1]).not.toBe('203.0.113.10');
+    expect(ips[2]).toBe('203.0.113.11');
+  });
+
+  it('returns no database text in errors', async () => {
+    const inv = (await issue((await draft()).id).expect(200)).body;
+    const res = await http.delete(`/v1/invoices/${inv.id}`).expect(409);
+    const bad = await http.get('/v1/invoices/not-a-uuid').expect(404);
+    for (const body of [res.body, bad.body]) {
+      expect(JSON.stringify(body)).not.toMatch(/violates|constraint|select |insert |syntax|relation|facture_/i);
+    }
+  });
+});
+
+describe('security: sessions', () => {
+  it('expires idle sessions after 8 hours', async () => {
+    const agent = request.agent(app.getHttpServer());
+    const res = await signUp(agent as never);
+    await agent.get('/v1/me').expect(200);
+    await admin.query("update sessions set last_active_at = now() - interval '9 hours' where user_id = $1", [res.body.user.id]);
+    await agent.get('/v1/me').expect(401);
+  });
+
+  it('signs out everywhere', async () => {
+    const email = uniqueEmail('all');
+    const first = request.agent(app.getHttpServer());
+    await signUp(first as never, email);
+    const second = request.agent(app.getHttpServer());
+    await second.post('/v1/auth/sign-in').send({ email, password: PASSWORD }).expect(200);
+    await first.get('/v1/me').expect(200);
+    await second.get('/v1/me').expect(200);
+    await second.post('/v1/auth/sign-out-all').expect(204);
+    await first.get('/v1/me').expect(401);
+    await second.get('/v1/me').expect(401);
+    await anon.post('/v1/auth/sign-out-all').expect(401);
+  });
+});
+
+describe('security: roles', () => {
+  it('restricts destructive routes to OWNER and ADMIN', async () => {
+    const member = await asRole('MEMBER');
+    const party = (await member.agent.post('/v1/parties').send(customerBody).expect(201)).body;
+    const none = '00000000-0000-4000-8000-000000000000';
+    for (const call of [
+      () => member.agent.put('/v1/company').send(company),
+      () => member.agent.delete(`/v1/parties/${party.id}`),
+      () => member.agent.delete(`/v1/items/${none}`),
+      () => member.agent.delete(`/v1/invoices/${none}`),
+      () => member.agent.delete(`/v1/payments/${none}`),
+      () => member.agent.get('/v1/audit-events'),
+      () => member.agent.get('/v1/export'),
+    ]) {
+      const res = await call();
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('FORBIDDEN');
+    }
+    expect((await events(member.me.tenant.id, 'auth.forbidden')).length).toBeGreaterThanOrEqual(7);
+
+    const owner = await asRole('OWNER');
+    await owner.agent.put('/v1/company').send(company).expect(200);
+    const p = (await owner.agent.post('/v1/parties').send(customerBody).expect(201)).body;
+    await owner.agent.delete(`/v1/parties/${p.id}`).expect(204);
+  });
+
+  it('lets ADMIN audit but not export, and OWNER export', async () => {
+    const admin2 = await asRole('ADMIN');
+    await admin2.agent.get('/v1/audit-events').expect(200);
+    await admin2.agent.get('/v1/export').expect(403);
+    const owner = await asRole('OWNER');
+    await owner.agent.put('/v1/company').send(company).expect(200);
+    const party = (await owner.agent.post('/v1/parties').send(customerBody).expect(201)).body;
+    const inv = (await owner.agent.post('/v1/invoices').send({ customerId: party.id, issueDate: '2026-03-10', lines: [line] }).expect(201)).body;
+    const out = (await owner.agent.get('/v1/export').expect(200)).body;
+    expect(out.company.name).toBe(company.name);
+    expect(out.parties).toHaveLength(1);
+    expect(out.invoices.map((i: { id: string }) => i.id)).toEqual([inv.id]);
+    expect(Array.isArray(out.payments)).toBe(true);
+    expect((await events(owner.me.tenant.id, 'tenant.exported')).length).toBe(1);
+  });
+});
+
+describe('security: audit trail', () => {
+  it('records authentication and business events', async () => {
+    const owner = await asRole('OWNER');
+    const tenant = owner.me.tenant.id;
+    const email = owner.me.user.email;
+    await anon.post('/v1/auth/sign-in').send({ email, password: 'wrong-password-1' }).expect(401);
+    await anon.post('/v1/auth/sign-in').send({ email, password: PASSWORD }).expect(200);
+    expect(await events(tenant, 'auth.sign_up')).toHaveLength(1);
+    expect(await events(tenant, 'auth.sign_in')).toHaveLength(1);
+    const failed = await events(tenant, 'auth.sign_in_failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].summary).toBe(email);
+
+    await owner.agent.put('/v1/company').send(company).expect(200);
+    await owner.agent.put('/v1/company').send({ ...company, rib: '007780000123400045678999', ice: '002876543000092' }).expect(200);
+    const upd = (await events(tenant, 'company.updated'))[0];
+    expect(upd.summary).toContain('ice');
+    expect(upd.summary).toContain('rib');
+    expect(upd.summary).not.toMatch(/0078|0028765/);
+
+    const party = (await owner.agent.post('/v1/parties').send(customerBody).expect(201)).body;
+    const d = (await owner.agent.post('/v1/invoices').send({ customerId: party.id, issueDate: '2026-03-10', lines: [line] }).expect(201)).body;
+    const inv = (await owner.agent.post(`/v1/invoices/${d.id}/issue`).expect(200)).body;
+    const issued = (await events(tenant, 'invoice.issued'))[0];
+    expect(issued.entity_id).toBe(inv.id);
+    expect(issued.summary).toBe(inv.number);
+    expect(issued.actor_user_id).toBe(owner.me.user.id);
+
+    const paid = (await owner.agent.post(`/v1/invoices/${inv.id}/payments`).send({ paidOn: '2026-03-15', method: 'CASH', amount: '100.00' }).expect(201)).body;
+    expect(await events(tenant, 'payment.recorded')).toHaveLength(1);
+    await owner.agent.delete(`/v1/payments/${paid.payments[0].id}`).expect(200);
+    const voided = (await events(tenant, 'payment.voided'))[0];
+    expect(voided.entity_id).toBe(paid.payments[0].id);
+
+    const list = (await owner.agent.get('/v1/audit-events?limit=5').expect(200)).body;
+    expect(list).toHaveLength(5);
+    expect(() => AuditEvent.array().parse(list)).not.toThrow();
+    expect(list[0].actorName).toBeDefined();
+    const older = (await owner.agent.get(`/v1/audit-events?before=${encodeURIComponent(list[4].at)}`).expect(200)).body;
+    expect(older.every((e: { at: string }) => e.at < list[4].at)).toBe(true);
+    await owner.agent.get('/v1/audit-events?limit=1000').expect(422);
+    const dump = JSON.stringify((await admin.query('select * from audit_events where tenant_id = $1', [tenant])).rows);
+    expect(dump).not.toContain(PASSWORD);
+    expect(dump).not.toContain('wrong-password-1');
+  });
+
+  it('is append-only, even for the owner role', async () => {
+    const owner = await asRole('OWNER');
+    await anon.post('/v1/auth/sign-in').send({ email: owner.me.user.email, password: PASSWORD }).expect(200);
+    await expect(admin.query("update audit_events set summary = 'x' where tenant_id = $1", [owner.me.tenant.id])).rejects.toThrow(/ajout seul/);
+    await expect(admin.query('delete from audit_events where tenant_id = $1', [owner.me.tenant.id])).rejects.toThrow(/ajout seul/);
+    const client = await appPool.connect();
+    try {
+      await client.query('begin');
+      await client.query("select set_config('app.tenant_id', $1, true)", [owner.me.tenant.id]);
+      await expect(client.query("update audit_events set summary = 'x'")).rejects.toThrow(/permission denied/);
+      await client.query('rollback');
+    } finally {
+      client.release();
+    }
+  });
+});
+
+describe('security: financial records', () => {
+  it('voids payments instead of deleting them', async () => {
+    const inv = (await issue((await draft()).id).expect(200)).body;
+    const due = Number(inv.totals.amountDue);
+    const a = (await http.post(`/v1/invoices/${inv.id}/payments`).send({ paidOn: '2026-03-15', method: 'CASH', amount: '100.00' }).expect(201)).body;
+    const b = (await http.post(`/v1/invoices/${inv.id}/payments`).send({ paidOn: '2026-03-16', method: 'CASH', amount: '50.00' }).expect(201)).body;
+    expect(b.paidAmount).toBe('150.00');
+    const after = (await http.delete(`/v1/payments/${a.payments[0].id}`).expect(200)).body;
+    expect(after.paidAmount).toBe('50.00');
+    expect(after.payments).toHaveLength(1);
+    await http.delete(`/v1/payments/${a.payments[0].id}`).expect(404);
+    const row = (await admin.query('select voided_at, voided_by from payments where id = $1', [a.payments[0].id])).rows[0];
+    expect(row.voided_at).not.toBeNull();
+    expect(row.voided_by).toBe(meUser.id);
+    const recent = (await http.get('/v1/dashboard').expect(200)).body.recentPayments;
+    expect(recent.some((p: { id: string }) => p.id === a.payments[0].id)).toBe(false);
+    const full = (await http.post(`/v1/invoices/${inv.id}/payments`).send({ paidOn: '2026-03-17', method: 'CASH', amount: (due - 50).toFixed(2) }).expect(201)).body;
+    expect(full.paymentStatus).toBe('PAID');
+
+    await expect(admin.query('delete from payments where id = $1', [a.payments[0].id])).rejects.toThrow(/annulé/);
+    await expect(admin.query("update payments set amount = '1.00' where id = $1", [b.payments[0].id])).rejects.toThrow(/immuable/);
+  });
+});
+
+describe('record integrity', () => {
+  it('freezes the seller at issuance', async () => {
+    const owner = await asRole('OWNER');
+    await owner.agent.put('/v1/company').send(company).expect(200);
+    const party = (await owner.agent.post('/v1/parties').send(customerBody).expect(201)).body;
+    const make = async () =>
+      (await owner.agent.post('/v1/invoices').send({ customerId: party.id, issueDate: '2026-03-10', lines: [line] }).expect(201)).body;
+    const inv = (await owner.agent.post(`/v1/invoices/${(await make()).id}/issue`).expect(200)).body;
+    expect(inv.seller.name).toBe(company.name);
+
+    await owner.agent.put('/v1/company').send({ ...company, name: 'Nouvelle Raison Sociale', rib: '007780000123400045678999' }).expect(200);
+    const again = (await owner.agent.get(`/v1/invoices/${inv.id}`).expect(200)).body;
+    expect(again.seller.name).toBe(company.name);
+    expect(again.seller.rib).toBe(company.rib);
+    const ubl = (await owner.agent.get(`/v1/invoices/${inv.id}/ubl`).expect(200)).text;
+    expect(ubl).toContain(company.name);
+    expect(ubl).not.toContain('Nouvelle Raison Sociale');
+    expect(ubl).not.toContain('007780000123400045678999');
+
+    const fresh = await make();
+    expect(fresh.seller.name).toBe('Nouvelle Raison Sociale');
+  });
+
+  it('rejects out-of-bounds bodies', async () => {
+    const tooLong = await http.post('/v1/invoices').send({ customerId, issueDate: '2026-03-10', notes: 'x'.repeat(2001), lines: [line] });
+    expect(tooLong.status).toBe(422);
+    const manyLines = await http.post('/v1/invoices').send({ customerId, issueDate: '2026-03-10', lines: Array(201).fill(line) });
+    expect(manyLines.status).toBe(422);
+  });
+});
+
+describe('row-level security guard', () => {
+  it('forces RLS with a policy on every table that has a tenant_id', async () => {
+    const { rows } = await admin.query(`
+      select c.relname, c.relrowsecurity, c.relforcerowsecurity,
+        (select count(*)::int from pg_policies p where p.schemaname = 'public' and p.tablename = c.relname) as policies
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+      join pg_attribute a on a.attrelid = c.oid and a.attname = 'tenant_id' and not a.attisdropped
+      where c.relkind = 'r'`);
+    expect(rows.length).toBeGreaterThanOrEqual(8);
+    for (const r of rows) {
+      expect({ table: r.relname, rls: r.relrowsecurity, forced: r.relforcerowsecurity, policies: r.policies > 0 }).toEqual({
+        table: r.relname,
+        rls: true,
+        forced: true,
+        policies: true,
+      });
+    }
   });
 });

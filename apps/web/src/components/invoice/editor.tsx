@@ -185,6 +185,7 @@ export function InvoiceEditor({
     dismiss("lines", ...Object.keys(patch).map((k) => `lines.${i}.${k}`));
   };
   const addLine = () => {
+    if (lines.length >= 200) return;
     focusAfter.current = lines.length;
     setLines((all) => [...all, newLine(rules.vatRates[0] ?? "20")]);
   };
@@ -400,6 +401,7 @@ export function InvoiceEditor({
                 <Input
                   label={t("editor.reference")}
                   aria-label={t("editor.reference")}
+                  maxLength={100}
                   value={reference}
                   onChange={setReference}
                   inputDir="ltr"
@@ -443,7 +445,7 @@ export function InvoiceEditor({
                           selectedKey={null}
                           allowsCustomValue
                           inputValue={l.description}
-                          onInputChange={(v) => setLine(i, { description: v })}
+                          onInputChange={(v) => setLine(i, { description: v.slice(0, 500) })}
                           onSelectionChange={(key) => {
                             const it = items.find((x) => x.id === key);
                             if (!it) return;
@@ -471,7 +473,7 @@ export function InvoiceEditor({
                           <DecimalField aria-label={`${t("editor.qty")} ${i + 1}`} size="small" hideSteppers value={l.quantity} onChange={(v) => setLine(i, { quantity: v })} error={flag("quantity")} />
                         </LineField>
                         <LineField label={t("editor.unit")} line={i} field="unit">
-                          <Input aria-label={`${t("editor.unit")} ${i + 1}`} size="small" value={l.unit} onChange={(v) => setLine(i, { unit: v })} isInvalid={!!flag("unit")} errorMessage={flag("unit")} />
+                          <Input aria-label={`${t("editor.unit")} ${i + 1}`} maxLength={20} size="small" value={l.unit} onChange={(v) => setLine(i, { unit: v })} isInvalid={!!flag("unit")} errorMessage={flag("unit")} />
                         </LineField>
                         <LineField label={t("editor.unitPrice")} line={i} field="unitPrice">
                           <DecimalField aria-label={`${t("editor.unitPrice")} ${i + 1}`} size="small" hideSteppers digits={[2, 2]} placeholder="0,00" value={l.unitPrice} onChange={(v) => setLine(i, { unitPrice: v })} error={flag("unitPrice")} />
@@ -507,7 +509,7 @@ export function InvoiceEditor({
                 })}
               </ol>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <Button variant="secondary" leadingIcon={RiAddLine} onClick={addLine}>
+                <Button variant="secondary" leadingIcon={RiAddLine} onClick={addLine} disabled={lines.length >= 200}>
                   {t("editor.addLine")}
                 </Button>
                 <p className="text-caption-1-regular text-text-tertiary">{t("editor.keyboardHint")}</p>
@@ -547,7 +549,7 @@ export function InvoiceEditor({
 
             <Card className="grid gap-4 p-5">
               <h2 className="text-headline-semibold text-text-primary">{t("editor.more")}</h2>
-              <Textarea label={t("editor.notes")} aria-label={t("editor.notes")} hint={t("editor.notesHint")} value={notes} onChange={setNotes} rows={3} />
+              <Textarea label={t("editor.notes")} aria-label={t("editor.notes")} maxLength={2000} hint={t("editor.notesHint")} value={notes} onChange={setNotes} rows={3} />
               <Select label={t("editor.language")} aria-label={t("editor.language")} selectedKey={language} onSelectionChange={(k) => k && setLanguage(String(k) as Language)}>
                 {LANGS.map((l) => (
                   <SelectItem key={l} id={l}>

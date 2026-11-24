@@ -67,7 +67,7 @@ export function SignInForm({ next, expired, reset }: { next?: string; expired?: 
         {expired && !reset && <Notice tone="info">{t("auth.expired")}</Notice>}
         {f.formError && <Notice tone="error">{f.formError}</Notice>}
         <Input name="email" type="email" label={t("auth.email")} autoComplete="email" isRequired isInvalid={!!f.errors.email} errorMessage={f.errors.email} />
-        <PasswordField name="password" label={t("auth.password")} autoComplete="current-password" isRequired errorMessage={f.errors.password} />
+        <PasswordField name="password" maxLength={128} label={t("auth.password")} autoComplete="current-password" isRequired errorMessage={f.errors.password} />
         <div className="-mt-1 flex justify-end">
           <LinkButton href="/mot-de-passe-oublie">{t("auth.forgot")}</LinkButton>
         </div>
@@ -99,7 +99,7 @@ export function SignUpForm() {
       <AuthHeading title={t("auth.signUpTitle")} sub={t("auth.signUpSub")} />
       <form ref={f.ref} onSubmit={f.onSubmit} noValidate className="flex flex-col gap-4">
         {f.formError && <Notice tone="error">{f.formError}</Notice>}
-        <Input name="name" label={t("auth.name")} autoComplete="name" isRequired isInvalid={!!f.errors.name} errorMessage={f.errors.name} />
+        <Input name="name" maxLength={120} label={t("auth.name")} autoComplete="name" isRequired isInvalid={!!f.errors.name} errorMessage={f.errors.name} />
         <Input
           name="email"
           type="email"
@@ -117,8 +117,8 @@ export function SignUpForm() {
             )
           }
         />
-        <PasswordField name="password" label={t("auth.password")} hint={t("auth.passwordHint")} autoComplete="new-password" isRequired errorMessage={f.errors.password} />
-        <Input name="companyName" label={t("auth.companyName")} autoComplete="organization" isRequired isInvalid={!!f.errors.companyName} errorMessage={f.errors.companyName} />
+        <PasswordField name="password" maxLength={128} label={t("auth.password")} hint={t("auth.passwordHint")} autoComplete="new-password" isRequired errorMessage={f.errors.password} />
+        <Input name="companyName" maxLength={160} label={t("auth.companyName")} autoComplete="organization" isRequired isInvalid={!!f.errors.companyName} errorMessage={f.errors.companyName} />
         <SubmitButton pending={f.pending}>{t("auth.signUp")}</SubmitButton>
       </form>
       <p className="mt-6 text-center text-body-regular text-text-secondary">
@@ -185,7 +185,7 @@ export function ResetForm({ token }: { token?: string }) {
       <AuthHeading title={t("auth.resetTitle")} sub={t("auth.resetSub")} />
       <form ref={f.ref} onSubmit={f.onSubmit} noValidate className="flex flex-col gap-4">
         {f.formError && <Notice tone="error">{f.formError}</Notice>}
-        <PasswordField name="password" label={t("auth.newPassword")} hint={t("auth.passwordHint")} autoComplete="new-password" isRequired errorMessage={f.errors.password} />
+        <PasswordField name="password" maxLength={128} label={t("auth.newPassword")} hint={t("auth.passwordHint")} autoComplete="new-password" isRequired errorMessage={f.errors.password} />
         <SubmitButton pending={f.pending}>{t("auth.resetSave")}</SubmitButton>
       </form>
     </>

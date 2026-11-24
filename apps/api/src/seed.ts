@@ -3,7 +3,7 @@ import type { InvoiceInput, Item, LineInput, PartyInput } from '@facture/core';
 import { Decimal } from 'decimal.js';
 import { AppModule } from './app.module.js';
 import { TenantDb } from './db/tenant-db.js';
-import { wipeTenant } from './db/wipe.js';
+import { assertLocalDevDatabase, wipeTenant } from './db/wipe.js';
 import { env } from './env.js';
 import { AuthService } from './auth/auth.service.js';
 import { CompanyService } from './company/company.service.js';
@@ -108,6 +108,8 @@ const plans: Plan[] = [
   { at: -1, cust: 7, lines: [[0, '3', 'accompagnement à la dématérialisation']], draft: true },
   { at: 0, cust: 12, lines: [[4, '2'], [2, '1', 'maintenance']], draft: true },
 ];
+
+assertLocalDevDatabase();
 
 const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn'] });
 const tenantDb = app.get(TenantDb);

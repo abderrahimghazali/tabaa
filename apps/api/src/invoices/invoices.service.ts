@@ -17,7 +17,7 @@ import {
   type PaymentInput,
 } from '@facture/core';
 import { Decimal } from 'decimal.js';
-import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { companies, invoices, numberingSequences, parties, payments } from '../db/schema.js';
 import { TenantDb } from '../db/tenant-db.js';
 import { conflict, invalid, notFound } from '../common/errors.js';
@@ -122,7 +122,7 @@ export class InvoicesService {
     return dto(p) as Payment;
   }
 
-  private build(row: Row, party: typeof parties.$inferSelect, pays: PaymentRow[]): Invoice {
+  private build(row: Row, party: typeof parties.$inferSelect, pays: PaymentRow[], liveSeller: Company | null): Invoice {
     const issued = row.state === 'ISSUED';
     const input = this.inputOf(row);
     const totals = issued ? row.snapshot!.totals : this.totalsOf(input);
@@ -142,6 +142,7 @@ export class InvoicesService {
       paidAmount: money(paid),
       ...this.status(row, paid),
       issuedAt: row.issuedAt ? row.issuedAt.toISOString() : null,
+      seller: issued ? row.snapshot!.seller : liveSeller,
       customer: issued ? row.snapshot!.customer : (dto(party) as Party),
       payments: pays.map((p) => this.paymentDto(p)),
     };
@@ -154,12 +155,13 @@ export class InvoicesService {
     const pays = await this.tx
       .select()
       .from(payments)
-      .where(eq(payments.invoiceId, id))
+      .where(and(eq(payments.invoiceId, id), isNull(payments.voidedAt)))
       .orderBy(asc(payments.paidOn), asc(payments.createdAt));
-    return this.build(row, party, pays);
+    const [companyRow] = row.state === 'DRAFT' ? await this.tx.select().from(companies) : [];
+    return this.build(row, party, pays, companyRow ? (dto(companyRow) as Company) : null);
   }
 
-  async summaries(filter: { state?: string; status?: string; q?: string; customerId?: string } = {}) {
+  async summaries(filter: { state?: string; status?: string; q?: string; customerId?: string } = {}, limit?: number) {
     const rows = await this.tx
       .select({ inv: invoices, customerName: parties.name })
       .from(invoices)
@@ -173,10 +175,12 @@ export class InvoicesService {
             : undefined,
         ),
       )
-      .orderBy(desc(invoices.issueDate), desc(invoices.createdAt));
+      .orderBy(desc(invoices.issueDate), desc(invoices.createdAt))
+      .limit(limit ?? 1_000_000);
     const sums = await this.tx
       .select({ invoiceId: payments.invoiceId, paid: sql<string>`sum(${payments.amount})` })
       .from(payments)
+      .where(isNull(payments.voidedAt))
       .groupBy(payments.invoiceId);
     const paidBy = new Map(sums.map((s) => [s.invoiceId, new Decimal(s.paid)]));
     const out: InvoiceSummary[] = rows.map(({ inv, customerName }) => {
@@ -271,7 +275,7 @@ export class InvoicesService {
         state: 'ISSUED',
         number: `${series}-${year}-${String(seq.lastValue).padStart(5, '0')}`,
         issuedAt: new Date(),
-        snapshot: { customer: dto(customer) as Party, totals },
+        snapshot: { customer: dto(customer) as Party, totals, seller: dto(company) as Company },
         totalNet: totals.totalNet,
         totalVat: totals.totalVat,
         totalGross: totals.totalGross,
@@ -301,7 +305,6 @@ export class InvoicesService {
   async ubl(id: string): Promise<string> {
     const invoice = await this.get(id);
     if (invoice.state !== 'ISSUED') throw conflict('Seule une facture émise peut être exportée en UBL.');
-    const [company] = await this.tx.select().from(companies);
     let originalNumber: string | undefined;
     if (invoice.originalInvoiceId) {
       const [orig] = await this.tx
@@ -310,7 +313,7 @@ export class InvoicesService {
         .where(eq(invoices.id, invoice.originalInvoiceId));
       originalNumber = orig?.number ?? undefined;
     }
-    return buildUbl({ company: dto(company) as Company, invoice, originalNumber });
+    return buildUbl({ company: invoice.seller!, invoice, originalNumber });
   }
 
   async addPayment(id: string, input: PaymentInput): Promise<Invoice> {
@@ -318,7 +321,7 @@ export class InvoicesService {
     if (row.state !== 'ISSUED' || row.type === 'CREDIT_NOTE') {
       throw conflict('Un paiement ne peut être enregistré que sur une facture émise.');
     }
-    const existing = await this.tx.select().from(payments).where(eq(payments.invoiceId, id));
+    const existing = await this.tx.select().from(payments).where(and(eq(payments.invoiceId, id), isNull(payments.voidedAt)));
     const remaining = new Decimal(row.amountDue).minus(sumOf(existing));
     const amount = new Decimal(input.amount);
     if (amount.lte(0)) {
@@ -347,10 +350,16 @@ export class InvoicesService {
   }
 
   async removePayment(paymentId: string): Promise<Invoice> {
-    const [p] = await this.tx.select().from(payments).where(eq(payments.id, paymentId));
+    const [p] = await this.tx
+      .select()
+      .from(payments)
+      .where(and(eq(payments.id, paymentId), isNull(payments.voidedAt)));
     if (!p) throw notFound('Paiement');
     await this.lock(p.invoiceId);
-    await this.tx.delete(payments).where(eq(payments.id, paymentId));
+    await this.tx
+      .update(payments)
+      .set({ voidedAt: new Date(), voidedBy: this.t.ctx.userId ?? null })
+      .where(eq(payments.id, paymentId));
     return this.get(p.invoiceId);
   }
 }

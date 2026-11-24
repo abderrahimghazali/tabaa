@@ -39,6 +39,7 @@ const SEGMENTS: Record<string, Key> = {
   articles: "nav.items",
   parametres: "nav.settings",
   compte: "settings.account",
+  securite: "settings.security",
   entreprise: "settings.company",
   facturation: "settings.invoicing",
   preferences: "settings.preferences",

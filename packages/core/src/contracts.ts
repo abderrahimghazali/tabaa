@@ -1,15 +1,15 @@
 import { z } from "zod";
 
 // Amounts travel as decimal strings so no float ever touches money.
-export const Decimal = z.string().regex(/^-?\d+(\.\d+)?$/);
+export const Decimal = z.string().regex(/^-?\d{1,13}(\.\d{1,6})?$/);
 export const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 export const Id = z.uuid();
 
 export const Address = z.object({
-  line1: z.string().min(1),
-  line2: z.string().optional(),
-  postalCode: z.string().optional(),
-  city: z.string().min(1),
+  line1: z.string().min(1).max(200),
+  line2: z.string().max(200).optional(),
+  postalCode: z.string().max(20).optional(),
+  city: z.string().min(1).max(100),
   country: z.string().length(2).default("MA"),
 });
 export type Address = z.infer<typeof Address>;
@@ -21,7 +21,7 @@ export const VatRegime = z.enum(["MONTHLY", "QUARTERLY", "NOT_SUBJECT"]);
 export const VatTaxPoint = z.enum(["RECEIPTS", "DEBITS"]);
 
 export const CompanyInput = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1).max(200),
   legalForm: z.string().optional(),
   capital: Decimal.optional(),
   address: Address,
@@ -51,7 +51,7 @@ export type PartyType = z.infer<typeof PartyType>;
 export const PartyInput = z.object({
   kind: PartyKind.default("CUSTOMER"),
   type: PartyType.default("BUSINESS"),
-  name: z.string().min(1),
+  name: z.string().min(1).max(200),
   ice: z.string().optional(),
   ifNumber: z.string().optional(),
   address: Address,
@@ -64,7 +64,7 @@ export const Party = PartyInput.extend({ id: Id });
 export type Party = z.infer<typeof Party>;
 
 export const ItemInput = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1).max(200),
   description: z.string().optional(),
   unit: z.string().default("unité"),
   unitPrice: Decimal,
@@ -92,9 +92,9 @@ export const PaymentStatus = z.enum(["UNPAID", "PARTIALLY_PAID", "PAID"]);
 export type PaymentStatus = z.infer<typeof PaymentStatus>;
 
 export const LineInput = z.object({
-  description: z.string().min(1),
+  description: z.string().min(1).max(500),
   quantity: Decimal,
-  unit: z.string().default("unité"),
+  unit: z.string().max(20).default("unité"),
   unitPrice: Decimal,
   discountPercent: Decimal.default("0"),
   vatRate: Decimal,
@@ -135,10 +135,10 @@ export const InvoiceInput = z.object({
   currency: z.string().length(3).default("MAD"),
   language: Language.optional(),
   paymentMethod: PaymentMethod.default("TRANSFER"),
-  reference: z.string().optional(),
-  notes: z.string().optional(),
+  reference: z.string().max(100).optional(),
+  notes: z.string().max(2000).optional(),
   originalInvoiceId: Id.optional(),
-  lines: z.array(LineInput).min(1),
+  lines: z.array(LineInput).min(1).max(200),
 });
 export type InvoiceInput = z.infer<typeof InvoiceInput>;
 
@@ -167,6 +167,8 @@ export const Invoice = InvoiceInput.extend({
   overdue: z.boolean(),
   issuedAt: z.string().nullable(),
   customer: Party,
+  // The company as it was when the invoice was issued; the live company for drafts.
+  seller: Company.nullable(),
   payments: z.array(Payment),
 });
 export type Invoice = z.infer<typeof Invoice>;
@@ -255,3 +257,16 @@ export const Me = z.object({
   role: Role,
 });
 export type Me = z.infer<typeof Me>;
+
+export const AuditEvent = z.object({
+  id: Id,
+  at: z.string(),
+  actorName: z.string().nullable(),
+  // Dotted verb, e.g. "auth.sign_in", "auth.sign_in_failed", "invoice.issued", "payment.voided", "company.updated".
+  action: z.string(),
+  entityType: z.string().nullable(),
+  entityId: z.string().nullable(),
+  summary: z.string().nullable(),
+  ip: z.string().nullable(),
+});
+export type AuditEvent = z.infer<typeof AuditEvent>;

@@ -1,11 +1,11 @@
 import "server-only";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { SESSION_COOKIE } from "./session";
+import { apiRoot, upstreamHeaders } from "./upstream";
 import {
   ApiError,
   type Company,
   type CompanyInput,
+  type AuditEvent,
   type Dashboard,
   type Invoice,
   type Me,
@@ -18,8 +18,7 @@ import {
   type PaymentInput,
 } from "@facture/core";
 
-const ROOT = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4100").replace(/\/v1\/?$/, "");
-const BASE = `${ROOT}/v1`;
+const BASE = `${apiRoot()}/v1`;
 
 export class ApiFailure extends Error {
   constructor(
@@ -30,11 +29,7 @@ export class ApiFailure extends Error {
   }
 }
 
-// Every server-side call carries the visitor's session; a 401 means it expired.
-async function sessionHeaders(json: boolean): Promise<Record<string, string>> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  return { ...(token && { cookie: `${SESSION_COOKIE}=${token}` }), ...(json && { "content-type": "application/json" }) };
-}
+const seg = encodeURIComponent;
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -42,7 +37,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     res = await fetch(`${BASE}${path}`, {
       cache: "no-store",
       ...init,
-      headers: await sessionHeaders(!!init?.body),
+      headers: await upstreamHeaders(!!init?.body),
     });
   } catch {
     throw new ApiFailure(0, { code: "UNREACHABLE", message: "API unreachable" });
@@ -74,37 +69,45 @@ export const api = {
     call<Company>("/company", { method: "PUT", body: body(input) }),
 
   parties: (q?: string) => call<Party[]>(`/parties${qs({ q })}`),
-  party: (id: string) => call<Party>(`/parties/${id}`),
+  party: (id: string) => call<Party>(`/parties/${seg(id)}`),
   createParty: (input: PartyInput) => call<Party>("/parties", { method: "POST", body: body(input) }),
   updateParty: (id: string, input: Partial<PartyInput>) =>
-    call<Party>(`/parties/${id}`, { method: "PATCH", body: body(input) }),
-  deleteParty: (id: string) => call<void>(`/parties/${id}`, { method: "DELETE" }),
+    call<Party>(`/parties/${seg(id)}`, { method: "PATCH", body: body(input) }),
+  deleteParty: (id: string) => call<void>(`/parties/${seg(id)}`, { method: "DELETE" }),
 
   items: (q?: string) => call<Item[]>(`/items${qs({ q })}`),
   createItem: (input: ItemInput) => call<Item>("/items", { method: "POST", body: body(input) }),
   updateItem: (id: string, input: Partial<ItemInput>) =>
-    call<Item>(`/items/${id}`, { method: "PATCH", body: body(input) }),
-  deleteItem: (id: string) => call<void>(`/items/${id}`, { method: "DELETE" }),
+    call<Item>(`/items/${seg(id)}`, { method: "PATCH", body: body(input) }),
+  deleteItem: (id: string) => call<void>(`/items/${seg(id)}`, { method: "DELETE" }),
 
   invoices: (params: { state?: string; status?: string; q?: string; customerId?: string } = {}) =>
     call<InvoiceSummary[]>(`/invoices${qs(params)}`),
-  invoice: (id: string) => call<Invoice>(`/invoices/${id}`),
+  invoice: (id: string) => call<Invoice>(`/invoices/${seg(id)}`),
   createInvoice: (input: InvoiceInput) =>
     call<Invoice>("/invoices", { method: "POST", body: body(input) }),
   updateInvoice: (id: string, input: InvoiceInput) =>
-    call<Invoice>(`/invoices/${id}`, { method: "PATCH", body: body(input) }),
-  deleteInvoice: (id: string) => call<void>(`/invoices/${id}`, { method: "DELETE" }),
-  issueInvoice: (id: string) => call<Invoice>(`/invoices/${id}/issue`, { method: "POST" }),
-  creditNote: (id: string) => call<Invoice>(`/invoices/${id}/credit-note`, { method: "POST" }),
+    call<Invoice>(`/invoices/${seg(id)}`, { method: "PATCH", body: body(input) }),
+  deleteInvoice: (id: string) => call<void>(`/invoices/${seg(id)}`, { method: "DELETE" }),
+  issueInvoice: (id: string) => call<Invoice>(`/invoices/${seg(id)}/issue`, { method: "POST" }),
+  creditNote: (id: string) => call<Invoice>(`/invoices/${seg(id)}/credit-note`, { method: "POST" }),
   addPayment: (id: string, input: PaymentInput) =>
-    call<Invoice>(`/invoices/${id}/payments`, { method: "POST", body: body(input) }),
-  deletePayment: (id: string) => call<Invoice>(`/payments/${id}`, { method: "DELETE" }),
+    call<Invoice>(`/invoices/${seg(id)}/payments`, { method: "POST", body: body(input) }),
+  deletePayment: (id: string) => call<Invoice>(`/payments/${seg(id)}`, { method: "DELETE" }),
   ubl: async (id: string) => {
-    const res = await fetch(`${BASE}/invoices/${id}/ubl`, { cache: "no-store", headers: await sessionHeaders(false) });
+    const res = await fetch(`${BASE}/invoices/${seg(id)}/ubl`, { cache: "no-store", headers: await upstreamHeaders(false) });
     if (res.status === 401) redirect("/session-expiree");
     if (!res.ok) throw new ApiFailure(res.status, { code: "UBL", message: `HTTP ${res.status}` });
     return res.text();
   },
 
   dashboard: () => call<Dashboard>("/dashboard"),
+
+  auditEvents: (before?: string) => call<AuditEvent[]>(`/audit-events${qs({ limit: "25", before })}`),
+  exportData: async () => {
+    const res = await fetch(`${BASE}/export`, { cache: "no-store", headers: await upstreamHeaders(false) });
+    if (res.status === 401) redirect("/session-expiree");
+    if (!res.ok) throw new ApiFailure(res.status, { code: res.status === 403 ? "FORBIDDEN" : "UNKNOWN", message: `HTTP ${res.status}` });
+    return res.text();
+  },
 };

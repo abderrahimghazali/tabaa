@@ -1,5 +1,6 @@
 import { connection } from "next/server";
 import { notFound, redirect } from "next/navigation";
+import { isUuid } from "@/lib/ids";
 import { api, ApiFailure } from "@/lib/api";
 import { getMe, requireCompany } from "@/lib/data";
 import { canWrite } from "@/lib/me";
@@ -10,6 +11,7 @@ export default async function EditInvoicePage({ params }: PageProps<"/factures/[
   await connection();
   if (!canWrite(await getMe())) redirect("/factures");
   const { id } = await params;
+  if (!isUuid(id)) notFound();
   const company = await requireCompany();
   const [invoice, parties, items] = await Promise.all([
     api.invoice(id).catch((e) => (e instanceof ApiFailure && e.status === 404 ? null : Promise.reject(e))),

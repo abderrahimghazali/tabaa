@@ -10,12 +10,13 @@ import { dto } from '../common/util.js';
 export class ItemsService {
   constructor(@Inject(TenantDb) private readonly t: TenantDb) {}
 
-  async list(q?: string): Promise<Item[]> {
+  async list(q?: string, limit = 1_000_000): Promise<Item[]> {
     const rows = await this.t.tx
       .select()
       .from(items)
       .where(q ? ilike(items.name, `%${q}%`) : undefined)
-      .orderBy(asc(items.name));
+      .orderBy(asc(items.name))
+      .limit(limit);
     return rows.map((r) => dto(r) as Item);
   }
 

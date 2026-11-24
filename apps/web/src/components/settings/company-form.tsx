@@ -23,9 +23,9 @@ import { TopbarActions } from "@/components/frame";
 import { IssueList } from "@/components/ui/issue-list";
 import { saveCompany } from "@/lib/actions";
 import { digits, groupDigits, ICE_GROUPS, RIB_GROUPS, todayIso } from "@/lib/format";
-import { WriteOnly } from "@/components/app/write-only";
+import { AdminOnly } from "@/components/app/write-only";
 import { useI18n } from "@/lib/i18n-client";
-import { useCanWrite } from "@/lib/me-client";
+import { useCanAdmin } from "@/lib/me-client";
 import { issuesAt } from "@/lib/result";
 import { Section } from "./section";
 
@@ -36,7 +36,7 @@ const opt = (s: string) => (s.trim() ? s.trim() : undefined);
 
 export function CompanyForm({ company }: { company: Company | null }) {
   const { t } = useI18n();
-  const canWrite = useCanWrite();
+  const canWrite = useCanAdmin();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<ApiError | null>(null);
@@ -128,6 +128,7 @@ export function CompanyForm({ company }: { company: Company | null }) {
       isInvalid={!!f(extra.path ?? key)}
       errorMessage={f(extra.path ?? key)}
       hint={extra.hint}
+      maxLength={{ name: 200, line1: 200, line2: 200, postalCode: 20, city: 100 }[String(key)]}
       inputClassName={extra.ident ? "ident" : undefined}
       {...(extra.list ? ({ list: extra.list } as object) : {})}
     />
@@ -136,11 +137,11 @@ export function CompanyForm({ company }: { company: Company | null }) {
   return (
     <div>
       <TopbarActions>
-        <WriteOnly>
+        <AdminOnly>
           <Button type="submit" form="company-form" disabled={pending}>
             {t("common.save")}
           </Button>
-        </WriteOnly>
+        </AdminOnly>
       </TopbarActions>
       <form id="company-form" inert={!canWrite || undefined}  onSubmit={submit} noValidate>
         {!company && (

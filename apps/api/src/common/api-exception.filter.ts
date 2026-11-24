@@ -40,9 +40,16 @@ function toBody(err: any): [number, Body] {
     case '23505':
       return [409, { code: 'CONFLICT', message: 'Cet élément existe déjà.' }];
     case '23000':
-      return [409, { code: 'CONFLICT', message: err.cause?.message ?? 'Une facture émise est immuable.' }];
+      return [409, { code: 'CONFLICT', message: 'Cet enregistrement est protégé et ne peut pas être modifié.' }];
   }
   return [500, { code: 'INTERNAL', message: 'Erreur interne.' }];
+}
+
+// pg errors carry row values in `detail` and the query in the message: log only the code and constraint.
+function describe(err: any): string {
+  const code = dbCode(err);
+  if (code) return `database error ${code} constraint=${err?.cause?.constraint ?? err?.constraint ?? '-'} table=${err?.cause?.table ?? err?.table ?? '-'}`;
+  return err instanceof Error ? `${err.name}: ${err.message}` : 'unknown error';
 }
 
 @Catch()
@@ -51,7 +58,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
   catch(err: unknown, host: ArgumentsHost) {
     const [status, body] = toBody(err);
-    if (status === 500) this.logger.error(err);
+    if (status === 500) this.logger.error(describe(err));
     host.switchToHttp().getResponse<Response>().status(status).json(body);
   }
 }

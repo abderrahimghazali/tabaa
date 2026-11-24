@@ -12,13 +12,13 @@ const EMPTY = { ice: null, ifNumber: null, email: null, phone: null, paymentTerm
 export class PartiesService {
   constructor(@Inject(TenantDb) private readonly t: TenantDb) {}
 
-  async list(kind?: string, q?: string): Promise<Party[]> {
+  async list(kind?: string, q?: string, limit = 1_000_000): Promise<Party[]> {
     const where = and(
       kind === 'CUSTOMER' || kind === 'SUPPLIER' ? inArray(parties.kind, [kind, 'BOTH']) : undefined,
       kind === 'BOTH' ? eq(parties.kind, 'BOTH') : undefined,
       q ? or(ilike(parties.name, `%${q}%`), ilike(parties.ice, `%${q}%`)) : undefined,
     );
-    const rows = await this.t.tx.select().from(parties).where(where).orderBy(asc(parties.name));
+    const rows = await this.t.tx.select().from(parties).where(where).orderBy(asc(parties.name)).limit(limit);
     return rows.map((r) => dto(r) as Party);
   }
 

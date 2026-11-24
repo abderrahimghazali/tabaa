@@ -12,4 +12,8 @@ export class AppThrottlerGuard extends ThrottlerGuard {
   ) {
     super(options, storage, reflector);
   }
+
+  protected async getTracker(req: Record<string, any>): Promise<string> {
+    return req.clientIp ?? req.ip;
+  }
 }

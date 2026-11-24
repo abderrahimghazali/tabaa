@@ -8,6 +8,8 @@ import {
 } from "next/font/google";
 import { BrandLoader } from "@/components/ui/brand";
 import "@/styles/globals.css";
+import { headers } from "next/headers";
+import { getLocale } from "@/lib/locale";
 
 const bricolage = Bricolage_Grotesque({
   variable: "--font-bricolage",
@@ -31,19 +33,22 @@ export const metadata: Metadata = {
   description: "Facturation pour les petites entreprises marocaines.",
 };
 
-// The locale cookie is read here so the static shell keeps lang/dir correct before first paint.
-const localeScript = `(function(){try{var m=document.cookie.match(/(?:^|; )locale=(fr|ar)/);if(m&&m[1]==="ar"){var d=document.documentElement;d.lang="ar";d.dir="rtl"}}catch(e){}})()`;
+// Every route is per-visitor and carries a per-request CSP nonce, so the document is never prerendered.
+export const instant = false;
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const locale = await getLocale();
+  // React Aria injects a <style> at runtime and reads its CSP nonce from this meta tag.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html
-      lang="fr"
-      dir="ltr"
+      lang={locale}
+      dir={locale === "ar" ? "rtl" : "ltr"}
       suppressHydrationWarning
       className={`${bricolage.variable} ${inter.variable} ${plexAr.variable} ${plexMono.variable} h-full antialiased`}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: localeScript }} />
+        <meta name="csp-nonce" content={nonce} />
       </head>
       <body>
         <Suspense

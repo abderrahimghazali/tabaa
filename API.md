@@ -46,6 +46,22 @@ Errors: non-2xx responses carry `ApiError` (`{ code, message, issues? }`).
 | DELETE | `/payments/:id` | | `Invoice` | Returns the updated invoice |
 | GET | `/dashboard` | | `Dashboard` | Includes 6-month series, aging buckets, top customers, last 8 invoices |
 
+## Security additions
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| POST | `/auth/sign-out-all` | | 204 | Revokes every session of the current user, including this one |
+| GET | `/audit-events?limit=&before=` | | `AuditEvent[]` | OWNER and ADMIN only. Newest first, `limit` max 100, `before` is an ISO timestamp cursor |
+| GET | `/export` | | JSON | OWNER only. The tenant's company, parties, items, invoices and payments |
+
+- Sessions: 8 hours idle, 14 days absolute.
+- `Invoice.seller` is the company frozen at issuance (legal identifiers, address, bank details). Issued invoices, their UBL and their rendering never read the live company. For drafts it is the live company.
+- Input bounds are enforced by the shared schemas (line count, text lengths, decimal digits).
+- `DELETE /payments/:id` no longer deletes: it marks the payment void (kept in the database, excluded from totals and from `Invoice.payments`). OWNER and ADMIN only.
+- OWNER and ADMIN only (403 `FORBIDDEN` otherwise): `PUT /company`, `DELETE /payments/:id`, `DELETE /parties/:id`, `DELETE /items/:id`, `DELETE /invoices/:id`.
+- Every state-changing request and every authentication event writes an append-only audit event.
+- The web server identifies itself with `X-Internal-Token` (`INTERNAL_API_TOKEN`) and passes the browser's address in `X-Client-IP`; the API uses that address for rate limiting and audit only when the token matches.
+
 Rules:
 
 - Numbering: one unbroken sequence per company, document type and year, formatted `FA-2026-00001` (invoice and deposit) and `AV-2026-00001` (credit note). The number is allocated inside the issuing transaction with a row lock.

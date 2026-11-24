@@ -11,7 +11,7 @@
     "db:down": "docker compose down"
   },
   "devDependencies": {
-    "turbo": "latest"
+    "turbo": "2.11.13"
   },
   "license": "AGPL-3.0-only"
 }

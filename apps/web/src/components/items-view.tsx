@@ -25,7 +25,7 @@ import { issuesAt } from "@/lib/result";
 import { cx } from "@/utils/cx";
 import { TopbarActions } from "./frame";
 import { WriteOnly } from "@/components/app/write-only";
-import { useCanWrite } from "@/lib/me-client";
+import { useCanAdmin, useCanWrite } from "@/lib/me-client";
 import { EmptyState, ListCard, ListToolbar, SortHeader, headerLabel } from "./invoice/list-kit";
 
 const PAGE = 10;
@@ -84,10 +84,10 @@ function ItemForm({
           title={error.code === "VALIDATION" ? t("error.fixFields") : error.message}
         />
       )}
-      <Input label={t("items.name")} value={v.name} onChange={(s) => set("name", s)} isRequired isInvalid={!!err("name")} errorMessage={err("name")} />
+      <Input label={t("items.name")} maxLength={200} value={v.name} onChange={(s) => set("name", s)} isRequired isInvalid={!!err("name")} errorMessage={err("name")} />
       <Input label={t("items.description")} value={v.description} onChange={(s) => set("description", s)} isInvalid={!!err("description")} errorMessage={err("description")} />
       <div className="grid grid-cols-2 gap-4">
-        <Input label={t("editor.unit")} value={v.unit} onChange={(s) => set("unit", s)} isInvalid={!!err("unit")} errorMessage={err("unit")} />
+        <Input label={t("editor.unit")} maxLength={20} value={v.unit} onChange={(s) => set("unit", s)} isInvalid={!!err("unit")} errorMessage={err("unit")} />
         <NumberField
           label={t("items.price")}
           className="col-span-2"
@@ -183,6 +183,7 @@ export function ItemsView({ items, vatRates, openNew }: { items: Item[]; vatRate
   };
 
   const canWrite = useCanWrite();
+  const canAdmin = useCanAdmin();
 
   return (
     <div>
@@ -271,7 +272,7 @@ export function ItemsView({ items, vatRates, openNew }: { items: Item[]; vatRate
             </DrawerBody>
             <DrawerFooter>
               {editing && editing !== "new" && (
-                <Button variant="danger" onClick={() => setDeleting(editing)} className="sm:me-auto">
+                canAdmin && <Button variant="danger" onClick={() => setDeleting(editing)} className="sm:me-auto">
                   {t("common.delete")}
                 </Button>
               )}

@@ -12,7 +12,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { Address, InvoiceTotals, LineInput, Party } from '@facture/core';
+import type { Address, Company, InvoiceTotals, LineInput, Party } from '@facture/core';
 
 const base = {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -107,7 +107,7 @@ export const invoices = pgTable(
     amountDue: money('amount_due').notNull(),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
     lines: jsonb('lines').$type<LineInput[]>().notNull(),
-    snapshot: jsonb('snapshot').$type<{ customer: Party; totals: InvoiceTotals }>(),
+    snapshot: jsonb('snapshot').$type<{ customer: Party; totals: InvoiceTotals; seller: Company }>(),
   },
   (t) => [
     uniqueIndex('invoices_number_uq')
@@ -128,6 +128,8 @@ export const payments = pgTable(
     method: text('method').notNull(),
     amount: money('amount').notNull(),
     reference: text('reference'),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: uuid('voided_by'),
   },
   (t) => [index('payments_invoice_idx').on(t.invoiceId)],
 );
@@ -223,4 +225,22 @@ export const emailTokens = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   },
   (t) => [index('email_tokens_user_idx').on(t.userId, t.purpose), index('email_tokens_expires_idx').on(t.expiresAt)],
+);
+
+export const auditEvents = pgTable(
+  'audit_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id'),
+    actorUserId: uuid('actor_user_id'),
+    actorName: text('actor_name'),
+    action: text('action').notNull(),
+    entityType: text('entity_type'),
+    entityId: text('entity_id'),
+    summary: text('summary'),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('audit_events_tenant_idx').on(t.tenantId, t.createdAt)],
 );

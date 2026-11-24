@@ -10,6 +10,7 @@ import type {
   PaymentInput,
 } from "@facture/core";
 import { api, ApiFailure } from "./api";
+import { getT } from "./locale";
 import type { Result } from "./result";
 
 async function run<T>(fn: () => Promise<T>): Promise<Result<T>> {
@@ -18,7 +19,13 @@ async function run<T>(fn: () => Promise<T>): Promise<Result<T>> {
     revalidatePath("/", "layout");
     return { ok: true, data };
   } catch (e) {
-    if (e instanceof ApiFailure) return { ok: false, error: e.error };
+    if (e instanceof ApiFailure) {
+      if (e.error.code === "FORBIDDEN") {
+        const { t } = await getT();
+        return { ok: false, error: { ...e.error, message: t("error.forbidden") } };
+      }
+      return { ok: false, error: e.error };
+    }
     throw e;
   }
 }
@@ -60,4 +67,13 @@ export async function searchAll(q: string) {
     invoices: invoices.slice(0, 5).map((i) => ({ id: i.id, number: i.number, customerName: i.customerName, totalGross: i.totalGross })),
     parties: parties.slice(0, 5).map((p) => ({ id: p.id, name: p.name, ice: p.ice ?? null })),
   };
+}
+
+export async function loadAuditEvents(before?: string) {
+  try {
+    return { ok: true as const, data: await api.auditEvents(before) };
+  } catch (e) {
+    if (e instanceof ApiFailure) return { ok: false as const, error: e.error };
+    throw e;
+  }
 }

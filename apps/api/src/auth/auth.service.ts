@@ -9,7 +9,9 @@ import type { Me, Role } from '@facture/core';
 import { asc, eq } from 'drizzle-orm';
 import { memberships, tenants, users } from '../db/schema.js';
 import { ApiException } from '../common/errors.js';
+import { env } from '../env.js';
 import { AuthDb } from './auth-db.js';
+import { logResetLinks } from './security-policy.js';
 import type { AuthUser } from './auth-types.js';
 
 export const normalizeEmail = (email: string) => email.trim().normalize('NFC').toLowerCase();
@@ -55,27 +57,39 @@ export class AuthService {
     }
   }
 
+  async membershipOf(userId: string) {
+    const [row] = await this.authDb.db
+      .select({
+        tenantId: memberships.tenantId,
+        tenantName: tenants.name,
+        role: memberships.role,
+        name: users.name,
+        email: users.email,
+      })
+      .from(memberships)
+      .innerJoin(tenants, eq(tenants.id, memberships.tenantId))
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .where(eq(memberships.userId, userId))
+      .orderBy(asc(memberships.createdAt))
+      .limit(1);
+    return row ?? null;
+  }
+
   async verify(email: string, password: string) {
     const [row] = await this.authDb.db
-      .select({ id: users.id, name: users.name, email: users.email, hash: users.passwordHash })
+      .select({ id: users.id, hash: users.passwordHash })
       .from(users)
       .where(eq(users.email, normalizeEmail(email)));
     const valid = await this.hasher.verify(password, row?.hash);
-    if (!valid || !row) return null;
-    const [membership] = await this.authDb.db
-      .select({ tenantId: memberships.tenantId, tenantName: tenants.name, role: memberships.role })
-      .from(memberships)
-      .innerJoin(tenants, eq(tenants.id, memberships.tenantId))
-      .where(eq(memberships.userId, row.id))
-      .orderBy(asc(memberships.createdAt))
-      .limit(1);
-    if (!membership) return null;
+    const membership = row ? await this.membershipOf(row.id) : null;
+    const known = row && membership ? { userId: row.id, name: membership.name, tenantId: membership.tenantId } : undefined;
+    if (!valid || !row || !membership) return { me: null, known };
     const me: Me = {
-      user: { id: row.id, name: row.name, email: row.email },
+      user: { id: row.id, name: membership.name, email: membership.email },
       tenant: { id: membership.tenantId, name: membership.tenantName },
       role: membership.role as Role,
     };
-    return me;
+    return { me, known };
   }
 
   async findForReset(email: string) {
@@ -109,7 +123,7 @@ export class PasswordResetMailer extends PasswordResetHandler {
 
   // No mail provider yet: the link goes to the log, never in production.
   send(link: PasswordResetLink) {
-    if (process.env.NODE_ENV !== 'production') {
+    if (logResetLinks(env.nodeEnv)) {
       this.logger.log(`Password reset link for ${link.email}: ${link.url}`);
     }
   }

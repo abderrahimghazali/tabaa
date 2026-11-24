@@ -3,6 +3,7 @@ import { auth } from "./i18n-auth";
 import { dashboard } from "./i18n-dashboard";
 import { invoice } from "./i18n-invoice";
 import { lists } from "./i18n-lists";
+import { security } from "./i18n-security";
 import { settings } from "./i18n-settings";
 
 // [français, العربية]
@@ -392,6 +393,8 @@ const base = {
   "palette.actions": ["Actions", "إجراءات"],
   "palette.invoices": ["Factures", "الفواتير"],
   "palette.customers": ["Clients", "الزبناء"],
+  "palette.navigate": ["Naviguer", "تنقل"],
+  "palette.select": ["Choisir", "اختيار"],
   "palette.empty": ["Aucun résultat.", "لا توجد نتائج."],
   "company.none": ["Aucune entreprise", "لا توجد مقاولة"],
   "company.settings": ["Paramètres de l'entreprise", "إعدادات المقاولة"],
@@ -500,7 +503,7 @@ const base = {
   "sheet.capital": ["au capital de", "رأس المال"],
 } as const satisfies Record<string, readonly [string, string]>;
 
-const dict = { ...base, ...auth, ...dashboard, ...lists, ...invoice, ...settings };
+const dict = { ...base, ...auth, ...dashboard, ...lists, ...invoice, ...settings, ...security };
 
 export type Key = keyof typeof dict;
 export type T = (key: Key, vars?: Record<string, string | number>) => string;

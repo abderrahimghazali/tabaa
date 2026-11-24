@@ -81,8 +81,9 @@ export function PartyForm({
     });
   };
 
+  const MAX: Record<string, number> = { name: 200, "address.line1": 200, "address.line2": 200, "address.postalCode": 20, "address.city": 100 };
   const field = (path: string, label: string, value: string, onChange: (s: string) => void, extra: Record<string, unknown> = {}) => (
-    <Input label={label} value={value} onChange={onChange} isInvalid={!!err(path)} errorMessage={err(path)} {...extra} />
+    <Input label={label} value={value} onChange={onChange} maxLength={MAX[path]} isInvalid={!!err(path)} errorMessage={err(path)} {...extra} />
   );
 
   return (

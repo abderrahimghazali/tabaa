@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Dashboard } from '@facture/core';
 import { Decimal } from 'decimal.js';
-import { and, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { invoices, parties, payments } from '../db/schema.js';
 import { TenantDb } from '../db/tenant-db.js';
 import { InvoicesService } from '../invoices/invoices.service.js';
@@ -40,12 +40,13 @@ export class DashboardService {
       .select({ amount: payments.amount, totalVat: invoices.totalVat, amountDue: invoices.amountDue })
       .from(payments)
       .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
-      .where(and(gte(payments.paidOn, monthStart), lt(payments.paidOn, nextMonth)));
+      .where(and(isNull(payments.voidedAt), gte(payments.paidOn, monthStart), lt(payments.paidOn, nextMonth)));
 
     const recent = await tx
       .select({ p: payments, number: invoices.number, snapshot: invoices.snapshot })
       .from(payments)
       .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
+      .where(isNull(payments.voidedAt))
       .orderBy(desc(payments.paidOn), desc(payments.createdAt))
       .limit(10);
 
@@ -68,6 +69,7 @@ export class DashboardService {
         createdAt: payments.createdAt,
       })
       .from(payments)
+      .where(isNull(payments.voidedAt))
       .orderBy(payments.paidOn, payments.createdAt);
     const collectedIn = (key: string) =>
       allPayments.filter((p) => p.paidOn.startsWith(key)).reduce((a, p) => a.plus(p.amount), new Decimal(0));

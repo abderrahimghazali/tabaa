@@ -14,6 +14,7 @@ import { NameAvatar } from "@/components/app/name-avatar";
 import { deleteParty } from "@/lib/actions";
 import { groupDigits, ICE_GROUPS, sub } from "@/lib/format";
 import { useI18n } from "@/lib/i18n-client";
+import { useCanAdmin } from "@/lib/me-client";
 import { cx } from "@/utils/cx";
 import { CrumbLabel, TopbarActions } from "./frame";
 import { InvoicesView } from "./invoice/invoices-view";
@@ -25,6 +26,7 @@ export function CustomerDetail({ party, invoices, today }: { party: Party; invoi
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const canAdmin = useCanAdmin();
 
   const issued = invoices.filter((i) => i.state === "ISSUED" && i.type !== "CREDIT_NOTE");
   const cents = (s: string) => Math.round(Number(s) * 100);
@@ -99,7 +101,7 @@ export function CustomerDetail({ party, invoices, today }: { party: Party; invoi
         <InvoicesView invoices={invoices} today={today} hideCustomer />
       </div>
 
-      <PartyDrawer isOpen={editing} onOpenChange={setEditing} party={party} onDelete={() => setDeleting(true)} />
+      <PartyDrawer isOpen={editing} onOpenChange={setEditing} party={party} onDelete={canAdmin ? () => setDeleting(true) : undefined} />
       <AlertDialog
         isOpen={deleting}
         onOpenChange={setDeleting}

@@ -12,3 +12,8 @@ export function MeProvider({ me, children }: { me: Me; children: React.ReactNode
 export const useMe = () => useContext(MeCtx);
 /** VIEWER accounts are read-only; the API enforces it too. */
 export const useCanWrite = () => useContext(MeCtx)?.role !== "VIEWER";
+/** OWNER and ADMIN may change the company, delete records and void payments. */
+export const useCanAdmin = () => {
+  const role = useContext(MeCtx)?.role;
+  return role === "OWNER" || role === "ADMIN";
+};
