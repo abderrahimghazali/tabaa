@@ -100,6 +100,22 @@ export function SecurityPanel({
               <p className="text-body-regular text-text-secondary">{t("security.auditEmpty")}</p>
             ) : (
               <>
+                <ul className="grid divide-y divide-border-button-default nav:hidden" aria-label={t("security.table")}>
+                  {events.map((e) => (
+                    <li key={e.id} className="grid gap-1 py-3 first:pt-0">
+                      <div className="text-body-medium text-text-primary wrap-break-word">
+                        {label(e.action)}
+                        {(e.summary ?? e.entityType) && <span className="font-normal text-text-secondary"> · {e.summary ?? e.entityType}</span>}
+                      </div>
+                      <div className="ident flex flex-wrap gap-x-2 text-caption-1-regular text-text-tertiary">
+                        <span className="font-sans">{e.actorName ?? t("security.noUser")}</span>
+                        <span>{when(e.at, locale)}</span>
+                        <span>{e.ip ?? "—"}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="hidden min-w-0 overflow-x-auto nav:block">
                 <Table aria-label={t("security.table")} selectionMode="none" size="sm" className="min-w-[720px]">
                   <TableHeader>
                     <TableColumn id="when" isRowHeader>{t("security.col.when")}</TableColumn>
@@ -120,9 +136,10 @@ export function SecurityPanel({
                     ))}
                   </TableBody>
                 </Table>
+                </div>
                 {more && (
                   <div className="mt-4 flex justify-center">
-                    <Button variant="secondary" onClick={loadMore} aria-busy={pending}>{t("security.auditLoadMore")}</Button>
+                    <Button variant="secondary" onClick={loadMore} aria-busy={pending} className="max-nav:w-full">{t("security.auditLoadMore")}</Button>
                   </div>
                 )}
               </>

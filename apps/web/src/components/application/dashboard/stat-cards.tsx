@@ -169,7 +169,7 @@ function StatHint({ label, hint }: { label: string; hint: string }) {
       <AriaButton
         aria-label={t("common.about", { label })}
         onPress={() => setOpen((isOpen) => !isOpen)}
-        className="flex shrink-0 cursor-pointer items-center justify-center rounded-full text-foreground-icon-secondary outline-none transition-colors duration-150 ease hover:text-foreground-icon-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+        className="flex shrink-0 cursor-pointer items-center justify-center rounded-full max-nav:-m-3 max-nav:p-3 text-foreground-icon-secondary outline-none transition-colors duration-150 ease hover:text-foreground-icon-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
       >
         <RiInformationFill className="size-5" aria-hidden />
       </AriaButton>
@@ -203,10 +203,10 @@ function FooterStatCard({ stat }: { stat: Stat }) {
   return localize((
     <section className="flex min-w-0 flex-col rounded-2xl bg-background-secondary-default p-2">
       {/* Icon tile + optional info glyph, both hanging from the same top inset */}
-      <div className="flex w-full items-start justify-between gap-2.5 p-2">
+      <div className="flex w-full items-start justify-between gap-2.5 p-2 max-sm:p-1.5">
         <span
           className={cx(
-            "flex size-10 shrink-0 items-center justify-center rounded-2lg bg-linear-to-b",
+            "flex size-10 shrink-0 items-center justify-center rounded-2lg bg-linear-to-b max-sm:size-8",
             TILE_TONES[stat.tone ?? "blue"],
           )}
         >
@@ -216,16 +216,16 @@ function FooterStatCard({ stat }: { stat: Stat }) {
       </div>
 
       {/* Label sits directly over the number, as on the plain cards */}
-      <div className="flex flex-col gap-0.5 px-2 pt-2.5 pb-3.5">
-        <p className="truncate text-body-medium text-text-secondary">{stat.label}</p>
-        <p className="text-display-4-medium whitespace-nowrap text-text-primary tabular-nums">
+      <div className="flex flex-col gap-0.5 px-2 pt-2.5 pb-3.5 max-sm:px-1.5 max-sm:pt-1 max-sm:pb-2.5">
+        <p className="text-body-medium text-text-secondary max-sm:text-body-2-medium">{stat.label}</p>
+        <p className="text-display-4-medium whitespace-nowrap text-text-primary tabular-nums max-sm:text-[16px] max-sm:leading-6 max-[380px]:text-[15px]">
           {stat.value}
         </p>
       </div>
 
       {/* Footer band: comparison caption + delta pill on an inner tile */}
-      <div className="mt-auto flex w-full items-center justify-between gap-2 rounded-2lg bg-background-inner-default py-1.5 pe-1.5 ps-2.5 shadow-card">
-        <p className="truncate text-body-regular text-text-secondary">
+      <div className="mt-auto flex w-full items-center justify-between gap-2 rounded-2lg bg-background-inner-default py-1.5 pe-1.5 ps-2.5 shadow-card max-sm:flex-col max-sm:items-start max-sm:gap-1 max-sm:p-2">
+        <p className="truncate text-body-regular text-text-secondary max-sm:whitespace-normal max-sm:text-caption-1-regular">
           {stat.caption ?? "From last month"}
         </p>
         <DeltaPill delta={stat.delta} deltaColor={stat.deltaColor} />
@@ -264,7 +264,7 @@ export function StatCards({
         columns === 1
           ? "grid-cols-1"
           : variant === "footer"
-            ? "grid-cols-1 sm:grid-cols-2"
+            ? "grid-cols-2 max-sm:gap-2.5"
             : "grid-cols-2",
         columns === 4 && (variant === "footer" ? "xl:grid-cols-4" : "lg:grid-cols-4"),
         className,

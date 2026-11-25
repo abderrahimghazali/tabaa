@@ -4,6 +4,7 @@ import { requireCompany } from "@/lib/data";
 import { todayIso } from "@/lib/format";
 import { getT } from "@/lib/locale";
 import { TopbarActions } from "@/components/frame";
+import { MobileActionBar } from "@/components/app/mobile-actions";
 import { InvoicesView } from "@/components/invoice/invoices-view";
 import { ButtonLink } from "@/components/base/buttons/button";
 import { PageHeader } from "@/components/app/layout";
@@ -31,6 +32,13 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/facture
       </TopbarActions>
       <PageHeader title={t("nav.invoices")} subtitle={t("invoices.subtitle")} />
       <InvoicesView invoices={invoices} today={todayIso()} initialTab={tab} initialQuery={q} />
+      <WriteOnly>
+        <MobileActionBar>
+          <ButtonLink href="/factures/nouvelle" leadingIcon={RiAddLine}>
+            {t("invoices.new")}
+          </ButtonLink>
+        </MobileActionBar>
+      </WriteOnly>
     </div>
   );
 }

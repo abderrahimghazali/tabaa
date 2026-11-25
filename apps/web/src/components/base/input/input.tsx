@@ -141,14 +141,14 @@ const inputStyles = sortCx({
   ].join(" "),
 
   fieldSize: {
-    medium: "p-2",                // 8px all sides → h auto = 36
-    small:  "h-8 px-1.5 py-2",    // 32 / 6 / 8
+    medium: "p-2 max-nav:min-h-11",                // 8px all sides → h auto = 36 (44 on phones)
+    small:  "h-8 px-1.5 py-2 max-nav:min-h-11",    // 32 / 6 / 8 (44 on phones)
   },
 
   // When a leadingAddon is present (Phone basic): tighten left padding.
   fieldWithAddonSize: {
-    medium: "h-9 ps-1 pe-2 py-2", // 36 / 4 / 8 / 8
-    small:  "h-8 ps-1 pe-1.5 py-2",
+    medium: "h-9 ps-1 pe-2 py-2 max-nav:min-h-11", // 36 / 4 / 8 / 8
+    small:  "h-8 ps-1 pe-1.5 py-2 max-nav:min-h-11",
   },
 
   content: "flex w-full items-center gap-2 min-w-0",

@@ -77,7 +77,7 @@ export interface ButtonLinkProps
 
 const styles = sortCx({
   base: [
-    "inline-flex items-center justify-center gap-0.5 whitespace-nowrap overflow-hidden",
+    "inline-flex items-center justify-center gap-0.5 whitespace-nowrap overflow-hidden max-nav:min-h-11",
     "font-sans select-none cursor-pointer",
     "button-press-motion",
     "outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-border-focus-ring",
@@ -164,6 +164,7 @@ export function Button({
         styles.size[size],
         styles.variant[variant],
         iconOnly && styles.iconOnlySize[size],
+        iconOnly && "max-nav:min-w-11",
         className,
       )}
       {...props}
@@ -200,6 +201,7 @@ export function ButtonLink({
         styles.size[size],
         styles.variant[variant],
         iconOnly && styles.iconOnlySize[size],
+        iconOnly && "max-nav:min-w-11",
         className,
       )}
       {...props}

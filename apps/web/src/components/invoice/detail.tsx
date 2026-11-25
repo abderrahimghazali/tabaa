@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { RiAddLine, RiCloseCircleLine, RiDeleteBinLine, RiDownload2Line, RiEditLine, RiFilePdf2Line, RiPrinterLine } from "@remixicon/react";
 import { PaymentMethod, type ApiError, type Invoice } from "@facture/core";
 import { Card, PageHeader } from "@/components/app/layout";
+import { MobileActionBar, type MoreItem } from "@/components/app/mobile-actions";
 import { Money } from "@/components/app/money";
 import { Chip } from "@/components/base/badges/chip";
 import { Button, ButtonLink } from "@/components/base/buttons/button";
@@ -144,6 +145,41 @@ export function InvoiceDetail({
   };
   const ct = confirm ? confirmText[typeof confirm === "string" ? confirm : "payment"] : null;
 
+  const downloadUbl = () => {
+    const a = document.createElement("a");
+    a.href = `/factures/${invoice.id}/ubl`;
+    a.download = "";
+    a.click();
+  };
+  const pdfItem: MoreItem = { key: "pdf", label: t("invoice.pdf"), icon: RiFilePdf2Line, onSelect: () => openPdf(invoice.id) };
+  const ublItem: MoreItem = { key: "ubl", label: t("invoice.ubl"), icon: RiDownload2Line, onSelect: downloadUbl };
+  const printItem: MoreItem = { key: "print", label: t("invoice.print"), icon: RiPrinterLine, onSelect: () => window.print() };
+  const editItem: MoreItem = { key: "edit", label: t("common.edit"), icon: RiEditLine, onSelect: () => router.push(`/factures/${invoice.id}/modifier`) };
+  const pdfButton = (
+    <Button leadingIcon={RiFilePdf2Line} onClick={() => openPdf(invoice.id)}>
+      {t("invoice.pdf")}
+    </Button>
+  );
+  let mobilePrimary: React.ReactNode = pdfButton;
+  let mobileMore: MoreItem[] = [ublItem, printItem];
+  if (isDraft) {
+    mobileMore = canWrite ? [pdfItem, editItem] : [];
+    mobilePrimary = canWrite ? (
+      <Button onClick={() => setConfirm("issue")} disabled={busy}>
+        {t("invoice.issue")}
+      </Button>
+    ) : (
+      pdfButton
+    );
+  } else if (canPay) {
+    mobileMore = [pdfItem, ublItem, printItem];
+    mobilePrimary = (
+      <Button leadingIcon={RiAddLine} onClick={() => setPayOpen(true)}>
+        {t("payment.record")}
+      </Button>
+    );
+  }
+
   return (
     <div>
       <CrumbLabel>{invoice.number ?? t("invoices.draftTitle")}</CrumbLabel>
@@ -188,6 +224,8 @@ export function InvoiceDetail({
           </>
         )}
       </TopbarActions>
+
+      <MobileActionBar more={mobileMore}>{mobilePrimary}</MobileActionBar>
 
       <PageHeader
         title={invoice.number ? <span className="ident">{invoice.number}</span> : t("invoices.draftTitle")}

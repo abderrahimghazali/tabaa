@@ -312,7 +312,7 @@ export function InvoiceEditor({
   );
 
   return (
-    <div className="pb-24 nav:pb-0">
+    <div>
       {invoice && <CrumbLabel>{invoice.number ?? t("invoices.draftTitle")}</CrumbLabel>}
       <TopbarActions>
         <div className="hidden items-center gap-2 nav:flex">{actionButtons}</div>
@@ -379,7 +379,7 @@ export function InvoiceEditor({
                       {overTerm ? t("editor.termOver", { n: term, max: rules.maxPaymentTermDays }) : t("editor.term", { n: Math.max(term, 0) })}
                     </span>
                     {dueTouched && (
-                      <button type="button" onClick={() => setDueTouched(false)} className="cursor-pointer text-accent-600 underline underline-offset-2">
+                      <button type="button" onClick={() => setDueTouched(false)} className="cursor-pointer text-accent-600 underline underline-offset-2 max-nav:inline-flex max-nav:min-h-11 max-nav:items-center">
                         {t("editor.resetDue")}
                       </button>
                     )}
@@ -475,18 +475,18 @@ export function InvoiceEditor({
                         <LineField label={t("editor.unit")} line={i} field="unit">
                           <Input aria-label={`${t("editor.unit")} ${i + 1}`} maxLength={20} size="small" value={l.unit} onChange={(v) => setLine(i, { unit: v })} isInvalid={!!flag("unit")} errorMessage={flag("unit")} />
                         </LineField>
-                        <LineField label={t("editor.unitPrice")} line={i} field="unitPrice">
+                        <LineField label={t("editor.unitPrice")} line={i} field="unitPrice" className="col-span-2 min-[520px]:col-span-1">
                           <DecimalField aria-label={`${t("editor.unitPrice")} ${i + 1}`} size="small" hideSteppers digits={[2, 2]} placeholder="0,00" value={l.unitPrice} onChange={(v) => setLine(i, { unitPrice: v })} error={flag("unitPrice")} />
                         </LineField>
                         <LineField label={t("editor.vat")} line={i} field="vatRate">
                           <Select
                             aria-label={`${t("editor.vat")} ${i + 1}`}
                             size="sm"
-                            selectedKey={l.vatRate}
+                            selectedKey={String(Number(l.vatRate))}
                             onSelectionChange={(k) => k && setLine(i, { vatRate: String(k) })}
                             isInvalid={!!flag("vatRate")}
                           >
-                            {rules.vatRates.map((r) => (
+                            {[...new Set([...rules.vatRates, String(Number(l.vatRate))])].map((r) => (
                               <SelectItem key={r} id={r}>
                                 <span className="num">{r} %</span>
                               </SelectItem>
@@ -567,8 +567,8 @@ export function InvoiceEditor({
         </div>
       </div>
 
-      <div className="fixed inset-x-2 bottom-2 z-30 flex items-center justify-end gap-2 rounded-3xl border border-border-button-default bg-background-primary-default p-2.5 shadow-dropdown nav:hidden">
-        {actionButtons}
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-button-default bg-background-primary-default px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] nav:hidden">
+        <div className="mx-auto flex max-w-[640px] items-center gap-2 [&>*]:flex-1">{actionButtons}</div>
       </div>
 
       <AlertDialog
@@ -610,9 +610,9 @@ export function InvoiceEditor({
   );
 }
 
-function LineField({ label, line, field, children }: { label: string; line: number; field: string; children: React.ReactNode }) {
+function LineField({ label, line, field, className, children }: { label: string; line: number; field: string; className?: string; children: React.ReactNode }) {
   return (
-    <div data-line={line} data-field={field} className="flex min-w-0 flex-col gap-1">
+    <div data-line={line} data-field={field} className={`flex min-w-0 flex-col gap-1 ${className ?? ""}`}>
       <span className="truncate text-caption-1-medium text-text-secondary min-[520px]:sr-only">{label}</span>
       {children}
     </div>

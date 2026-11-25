@@ -69,18 +69,19 @@ export function Echeancier({ receivables, today }: { receivables: InvoiceSummary
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
   const [active, setActive] = useState<number | null>(null);
+  const [view, setView] = useState({ left: 0, width: 0, max: 0 });
+  const [armed, setArmed] = useState<number | null>(null);
+  const touched = useRef(false);
+  const positioned = useRef(false);
+  const [measured, setMeasured] = useState(false);
 
   useLayoutEffect(() => {
     if (!box.current) return;
     const ro = new ResizeObserver(() => box.current && setWidth(box.current.clientWidth));
     ro.observe(box.current);
     setWidth(box.current.clientWidth);
+    setMeasured(true);
     return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const el = scroller.current;
-    if (el && el.scrollWidth > el.clientWidth) el.scrollLeft = GUTTER;
   }, []);
 
   const { marks, stack } = useMemo(() => layout(receivables, today, width), [receivables, today, width]);
@@ -88,6 +89,25 @@ export function Echeancier({ receivables, today }: { receivables: InvoiceSummary
   const x1 = width - 28;
   const unit = (x1 - x0) / (SPAN_BEFORE + SPAN_AFTER);
   const xAt = (d: number) => x0 + (d + SPAN_BEFORE) * unit;
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const read = () => setView({ left: el.scrollLeft, width: el.clientWidth, max: el.scrollWidth - el.clientWidth });
+    if (!positioned.current && measured && el.scrollWidth > el.clientWidth) {
+      positioned.current = true;
+      // Today sits about a third in from the left edge, so late and upcoming invoices are both in view.
+      el.scrollLeft = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, xAt(0) - el.clientWidth / 3));
+    }
+    read();
+    el.addEventListener("scroll", read, { passive: true });
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", read);
+      ro.disconnect();
+    };
+  }, [width, measured]); // eslint-disable-line react-hooks/exhaustive-deps
   const plotH = Math.max(200, stack + TOOLTIP_ROOM);
   const bucketMarks = marks.filter((m) => m.bucket);
   const ticks = [-30, -15, 0, 15, 30, 45, 60];
@@ -101,8 +121,16 @@ export function Echeancier({ receivables, today }: { receivables: InvoiceSummary
         ? t("due.today")
         : t("due.in", { n: daysLabel(m.days, locale) });
 
+  const fade = "pointer-events-none absolute inset-y-0 z-30 w-8 from-background-primary-default to-transparent transition-opacity duration-150";
+  const tipLeft = (x: number) => {
+    const lo = view.width ? view.left + 119 : 119;
+    const hi = view.width ? view.left + view.width - 119 : width - 119;
+    return Math.min(Math.max(x, lo), Math.max(lo, hi));
+  };
+
   return (
-    <div ref={scroller} className="overflow-x-auto pb-1" dir="ltr">
+    <div className="relative" dir="ltr">
+    <div ref={scroller} className="overflow-x-auto pb-1" onClick={() => { setArmed(null); setActive(null); }}>
       <div ref={box} className="relative w-full min-w-[680px]" style={{ height: plotH + AXIS }}>
         <div
           className="absolute top-0 bottom-[60px] bg-foreground-icon-error/5"
@@ -168,12 +196,21 @@ export function Echeancier({ receivables, today }: { receivables: InvoiceSummary
             key={m.inv.id}
             href={`/factures/${m.inv.id}`}
             aria-label={`${m.inv.customerName}, ${m.inv.number ?? ""}, ${dueText(m)}`}
-            onMouseEnter={() => setActive(i)}
-            onMouseLeave={() => setActive((v) => (v === i ? null : v))}
+            onPointerDown={(e) => { touched.current = e.pointerType === "touch"; }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (touched.current && armed !== i) {
+                e.preventDefault();
+                setArmed(i);
+                setActive(i);
+              }
+            }}
+            onMouseEnter={() => { if (!touched.current) setActive(i); }}
+            onMouseLeave={() => { if (!touched.current) setActive((v) => (v === i ? null : v)); }}
             onFocus={() => setActive(i)}
-            onBlur={() => setActive((v) => (v === i ? null : v))}
+            onBlur={() => { if (!touched.current) setActive((v) => (v === i ? null : v)); }}
             className={cx(
-              "absolute rounded-full opacity-90 shadow-[0_0_0_2px_var(--color-background-primary-default)] transition-transform duration-150 hover:z-10 hover:scale-110 hover:opacity-100 focus-visible:z-10 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:outline-text-primary",
+              "absolute rounded-full opacity-90 shadow-[0_0_0_2px_var(--color-background-primary-default)] after:absolute after:top-1/2 after:left-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] nav:after:hidden transition-transform duration-150 hover:z-10 hover:scale-110 hover:opacity-100 focus-visible:z-10 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:outline-text-primary",
               toneBg[m.tone],
             )}
             style={{
@@ -191,7 +228,7 @@ export function Echeancier({ receivables, today }: { receivables: InvoiceSummary
             role="tooltip"
             className="rise pointer-events-none absolute z-20 w-[230px] rounded-2xl border border-border-button-default bg-background-primary-default p-3 text-body-regular shadow-dropdown"
             style={{
-              left: Math.min(Math.max(a.x, 119), width - 119),
+              left: tipLeft(a.x),
               top: plotH - a.cy - a.r - 10,
               transform: "translate(-50%, -100%)",
             }}
@@ -202,9 +239,13 @@ export function Echeancier({ receivables, today }: { receivables: InvoiceSummary
               <Money value={a.remaining} locale={locale} className="text-body-medium text-text-primary" />
               <span className={cx("text-caption-1-medium", toneText[a.tone])}>{dueText(a)}</span>
             </div>
+            {armed !== null && armed === active && <div className="mt-1.5 text-caption-1-regular text-text-tertiary">{t("mob.tapAgain")}</div>}
           </div>
         )}
       </div>
+    </div>
+      <span aria-hidden className={cx(fade, "left-0 bg-linear-to-r", view.left > 1 ? "opacity-100" : "opacity-0")} />
+      <span aria-hidden className={cx(fade, "right-0 bg-linear-to-l", view.left < view.max - 1 ? "opacity-100" : "opacity-0")} />
     </div>
   );
 }

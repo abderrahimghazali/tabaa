@@ -27,8 +27,8 @@ function Inner({ children }: { children: React.ReactNode }) {
       <Tabs selectedKey={selected} onSelectionChange={(key) => guard.go(`/parametres/${key}`)}>
         <TabList aria-label={t("settings.tabsLabel")}>
           {TABS.map(({ id, key, icon }) => (
-            <Tab key={id} id={id} icon={icon} aria-label={t(key)} className="max-sm:[&:not([data-selected])_.lbl]:hidden">
-              <span className="lbl">{t(key)}</span>
+            <Tab key={id} id={id} icon={icon}>
+              {t(key)}
             </Tab>
           ))}
         </TabList>

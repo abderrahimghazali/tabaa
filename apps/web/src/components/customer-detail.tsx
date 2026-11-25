@@ -1,5 +1,7 @@
 "use client";
 
+import { MobileActionBar } from "@/components/app/mobile-actions";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { RiAddLine, RiEditLine } from "@remixicon/react";
@@ -53,9 +55,9 @@ export function CustomerDetail({ party, invoices, today }: { party: Party; invoi
   ];
 
   const stat = (label: string, value: number, tone?: string) => (
-    <Card className="p-4">
-      <div className="text-body-regular text-text-secondary">{label}</div>
-      <Money value={value.toFixed(2)} locale={locale} className={cx("mt-1 text-title-2-medium", tone ?? "text-text-primary")} />
+    <Card className="min-w-fit flex-1 p-4 max-sm:rounded-2xl max-sm:p-3">
+      <div className="text-body-regular text-text-secondary max-sm:text-caption-1-medium">{label}</div>
+      <Money value={value.toFixed(2)} locale={locale} className={cx("mt-1 text-title-2-medium max-sm:flex-col max-sm:items-start max-sm:gap-0 max-sm:text-[15px] max-sm:leading-5", tone ?? "text-text-primary")} />
     </Card>
   );
 
@@ -72,6 +74,13 @@ export function CustomerDetail({ party, invoices, today }: { party: Party; invoi
           </ButtonLink>
         </WriteOnly>
       </TopbarActions>
+      <WriteOnly>
+        <MobileActionBar more={[{ key: "edit", label: t("common.edit"), icon: RiEditLine, onSelect: () => setEditing(true) }]}>
+          <ButtonLink href="/factures/nouvelle" leadingIcon={RiAddLine}>
+            {t("invoices.new")}
+          </ButtonLink>
+        </MobileActionBar>
+      </WriteOnly>
 
       <PageHeader title={party.name} badge={<Chip variant="caption" color="gray">{t(`partyType.${party.type}`)}</Chip>} />
 
@@ -84,14 +93,14 @@ export function CustomerDetail({ party, invoices, today }: { party: Party; invoi
             </div>
             <dl className="grid gap-2.5 text-body-regular">
               {info.filter(([, v]) => v).map(([k, v]) => (
-                <div key={k} className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
-                  <dt className="text-text-secondary">{k}</dt>
+                <div key={k} className="grid gap-0.5 sm:grid-cols-[140px_minmax(0,1fr)] sm:gap-3">
+                  <dt className="text-text-secondary max-sm:text-caption-1-medium">{k}</dt>
                   <dd className="min-w-0 wrap-break-word text-text-primary">{v}</dd>
                 </div>
               ))}
             </dl>
           </Card>
-          <div className="grid gap-3 min-[560px]:grid-cols-3 wide:grid-cols-1">
+          <div className="flex gap-2 overflow-x-auto sm:gap-3 wide:grid wide:grid-cols-1 wide:overflow-visible">
             {stat(t("customers.invoiced"), invoiced)}
             {stat(t("customers.outstanding"), outstanding)}
             {stat(t("dash.overdue"), overdue, overdue > 0 ? "text-text-error-primary" : undefined)}

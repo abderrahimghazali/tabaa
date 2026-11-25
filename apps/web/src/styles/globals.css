@@ -1224,3 +1224,12 @@ html[dir="rtl"] .grow-x-rtl {
     display: table-header-group;
   }
 }
+
+/* Phones and small tablets: inputs stay at 16px so iOS Safari does not zoom on focus. */
+@media (max-width: 959px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

@@ -1,5 +1,7 @@
 "use client";
 
+import { MobileActionBar } from "@/components/app/mobile-actions";
+
 import { useMemo, useState, useTransition } from "react";
 import { RiAddLine, RiBox3Line } from "@remixicon/react";
 import { getCoreRowModel, getPaginationRowModel, getSortedRowModel, useReactTable } from "@tanstack/react-table";
@@ -87,10 +89,10 @@ function ItemForm({
       <Input label={t("items.name")} maxLength={200} value={v.name} onChange={(s) => set("name", s)} isRequired isInvalid={!!err("name")} errorMessage={err("name")} />
       <Input label={t("items.description")} value={v.description} onChange={(s) => set("description", s)} isInvalid={!!err("description")} errorMessage={err("description")} />
       <div className="grid grid-cols-2 gap-4">
-        <Input label={t("editor.unit")} maxLength={20} value={v.unit} onChange={(s) => set("unit", s)} isInvalid={!!err("unit")} errorMessage={err("unit")} />
+        <Input className="max-sm:order-2" label={t("editor.unit")} maxLength={20} value={v.unit} onChange={(s) => set("unit", s)} isInvalid={!!err("unit")} errorMessage={err("unit")} />
         <NumberField
           label={t("items.price")}
-          className="col-span-2"
+          className="col-span-2 max-sm:order-1"
           hint={err("unitPrice")}
           isInvalid={!!err("unitPrice")}
           minValue={0}
@@ -98,7 +100,7 @@ function ItemForm({
           value={v.unitPrice === "" ? Number.NaN : Number(v.unitPrice)}
           onChange={(n) => set("unitPrice", Number.isNaN(n) ? "" : String(n))}
         />
-        <Select label={t("lists.vatRate")} selectedKey={v.vatRate} onSelectionChange={(k) => set("vatRate", String(k))}>
+        <Select className="max-sm:order-3" label={t("lists.vatRate")} selectedKey={v.vatRate} onSelectionChange={(k) => set("vatRate", String(k))}>
           {(vatRates.includes(v.vatRate) ? vatRates : [...vatRates, v.vatRate]).map((r) => (
             <SelectItem key={r} id={r} textValue={`${r} %`}>
               <span className="num">{r} %</span>
@@ -194,6 +196,13 @@ export function ItemsView({ items, vatRates, openNew }: { items: Item[]; vatRate
           </Button>
         </WriteOnly>
       </TopbarActions>
+      <WriteOnly>
+        <MobileActionBar>
+          <Button leadingIcon={RiAddLine} onClick={() => setEditing("new")}>
+            {t("items.new")}
+          </Button>
+        </MobileActionBar>
+      </WriteOnly>
 
       <ListCard className={totalPages > 1 ? "pb-3" : "pb-0"}>
         <ListToolbar count={<><span className="num">{data.length}</span> {t(data.length === 1 ? "items.countOne" : "items.count")}</>}>
@@ -203,7 +212,7 @@ export function ItemsView({ items, vatRates, openNew }: { items: Item[]; vatRate
             placeholder={t("items.search")}
             value={q}
             onChange={(v) => { setQ(v); setPagination((p) => ({ ...p, pageIndex: 0 })); }}
-            className="min-w-[180px] flex-1 sm:w-[200px] sm:flex-none"
+            className="min-w-0 flex-1 nav:w-[200px] nav:min-w-[180px] nav:flex-none"
           />
         </ListToolbar>
 
@@ -215,7 +224,39 @@ export function ItemsView({ items, vatRates, openNew }: { items: Item[]; vatRate
           </div>
         ) : (
           <>
-            <div className="mt-2">
+            <ul className="mt-2 divide-y divide-separator-border border-t border-separator-border nav:hidden">
+              {rows.map((row) => {
+                const it = row.original;
+                const body = (
+                  <>
+                    <NameAvatar name={it.name} size="md" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-body-medium text-text-primary wrap-break-word">{it.name}</div>
+                      {it.description && <div className="text-caption-1-regular text-text-tertiary wrap-break-word">{it.description}</div>}
+                    </div>
+                    <div className="shrink-0 text-end">
+                      <Money value={it.unitPrice} locale={locale} className="text-body-medium text-text-primary" />
+                      <div className="text-caption-1-regular text-text-secondary">
+                        {it.unit} · <span className="num">{Number(it.vatRate)} %</span>
+                      </div>
+                    </div>
+                  </>
+                );
+                return (
+                  <li key={row.id}>
+                    {canWrite ? (
+                      <button type="button" onClick={() => setEditing(it)} className="flex min-h-14 w-full items-start gap-3 p-4 text-start">
+                        {body}
+                      </button>
+                    ) : (
+                      <div className="flex min-h-14 items-start gap-3 p-4">{body}</div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="mt-2 hidden nav:block">
               <Table aria-label={t("lists.itemsTable")} selectionMode="none" onRowAction={(key) => canWrite && setEditing(items.find((i) => i.id === key) ?? null)} className="min-w-[640px]">
                 <TableHeader>
                   {headers.map((h) => (

@@ -69,7 +69,7 @@ function paginationRange(
 
 // No transition on the cells: animating background/shadow/color makes the
 // previously-active number visibly fade out ("flicker") on every page change.
-const cell = "flex size-8 shrink-0 items-center justify-center rounded-lg text-body-medium";
+const cell = "flex size-8 max-nav:size-11 shrink-0 items-center justify-center rounded-lg text-body-medium";
 
 /** Below this nav width, Previous/Next drop their labels and siblingCount
  *  clamps to 0 — the full-label, full-sibling layout starts clipping

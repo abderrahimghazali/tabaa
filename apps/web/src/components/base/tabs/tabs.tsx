@@ -69,54 +69,81 @@ type Underline = { left: number; width: number };
 
 export function TabList<T extends object>({ className, ref, ...props }: TabListProps<T>) {
   const direction = useDirection();
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const lastSelected = useRef<HTMLElement | null>(null);
   const [underline, setUnderline] = useState<Underline | null>(null);
+  const [fades, setFades] = useState({ left: false, right: false });
 
   useIsomorphicLayoutEffect(() => {
     const el = wrapperRef.current;
-    if (!el) return;
+    const scroller = scrollerRef.current;
+    if (!el || !scroller) return;
+    const updateFades = () => {
+      const max = scroller.scrollWidth - scroller.clientWidth;
+      const pos = Math.abs(scroller.scrollLeft);
+      const start = pos > 1;
+      const end = pos < max - 1;
+      setFades(direction === "rtl" ? { left: end, right: start } : { left: start, right: end });
+    };
     const measure = () => {
       const selected = el.querySelector<HTMLElement>("[role='tab'][data-selected]");
       if (selected) {
         setUnderline({ left: selected.offsetLeft, width: selected.offsetWidth });
+        if (selected !== lastSelected.current) {
+          lastSelected.current = selected;
+          if (scroller.scrollWidth > scroller.clientWidth) selected.scrollIntoView({ inline: "center", block: "nearest" });
+        }
       }
+      updateFades();
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
+    ro.observe(scroller);
     // Labels and fonts can change width without resizing the full tab strip.
     const observeTabs = () => el.querySelectorAll("[role='tab']").forEach(tab => ro.observe(tab));
     observeTabs();
     const mo = new MutationObserver(() => { observeTabs(); measure(); });
     mo.observe(el, { attributes: true, childList: true, characterData: true, subtree: true, attributeFilter: ["data-selected"] });
+    scroller.addEventListener("scroll", updateFades, { passive: true });
     return () => {
       mo.disconnect();
       ro.disconnect();
+      scroller.removeEventListener("scroll", updateFades);
     };
   }, [direction]);
 
+  const fade = "pointer-events-none absolute inset-y-0 z-10 w-8 from-background-full to-transparent transition-opacity duration-150";
+
   return (
-    <div ref={wrapperRef} className="relative w-full">
-      <AriaTabList
-        ref={ref}
-        {...props}
-        className={(state) =>
-          cx(
-            "flex w-full items-center gap-1 border-b border-separator-border",
-            typeof className === "function" ? className(state) : className,
-          )
-        }
-      />
-      {underline && (
-        <span
-          aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 h-0.5 bg-accent-600 transition-[transform,width] duration-200 ease"
-          style={{
-            transform: `translateX(${underline.left}px)`,
-            width: underline.width,
-          }}
-        />
-      )}
+    <div className="relative w-full">
+      <div ref={scrollerRef} className="overflow-x-auto overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div ref={wrapperRef} className="relative w-max min-w-full">
+          <AriaTabList
+            ref={ref}
+            {...props}
+            className={(state) =>
+              cx(
+                "flex w-max min-w-full items-center gap-1 border-b border-separator-border",
+                typeof className === "function" ? className(state) : className,
+              )
+            }
+          />
+          {underline && (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute bottom-0 left-0 h-0.5 bg-accent-600 transition-[transform,width] duration-200 ease"
+              style={{
+                transform: `translateX(${underline.left}px)`,
+                width: underline.width,
+              }}
+            />
+          )}
+        </div>
+      </div>
+      <span aria-hidden className={cx(fade, "left-0 bg-linear-to-r", fades.left ? "opacity-100" : "opacity-0")} />
+      <span aria-hidden className={cx(fade, "right-0 bg-linear-to-l", fades.right ? "opacity-100" : "opacity-0")} />
     </div>
   );
 }
@@ -137,7 +164,7 @@ export function Tab({ className, children, icon: Icon, count, ref, ...props }: T
       {...props}
       className={(state) =>
         cx(
-          "relative inline-flex cursor-pointer items-center gap-2.5 px-2.5 py-2 whitespace-nowrap",
+          "relative inline-flex shrink-0 cursor-pointer items-center gap-2.5 px-2.5 py-2 whitespace-nowrap max-nav:min-h-11",
           "outline-none transition-colors duration-150 ease",
           "focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-border-focus-ring",
           state.isDisabled && "cursor-not-allowed opacity-50",

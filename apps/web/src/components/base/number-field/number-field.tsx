@@ -64,7 +64,7 @@ export function NumberField({
   fieldClassName,
   ...props
 }: NumberFieldProps) {
-  const stepper = cx(STEPPER, size === "small" ? "size-5" : "size-6");
+  const stepper = cx(STEPPER, size === "small" ? "size-5" : "size-6", "max-nav:size-8");
 
   return (
     <AriaNumberField

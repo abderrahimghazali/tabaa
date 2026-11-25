@@ -48,6 +48,14 @@ export type DrawerSize = "sm" | "md" | "lg";
 
 const styles = sortCx({
   overlay: "group/drawer fixed inset-x-0 top-0 z-100 flex h-(--visual-viewport-height) p-2 sm:p-3",
+  // Phones: a side drawer that holds a form or a list becomes a tall bottom sheet.
+  sheetOverlay: "max-sm:items-end max-sm:p-0",
+  sheetModal: [
+    "max-sm:h-[92%]! max-sm:max-w-none!",
+    "max-sm:motion-safe:data-[entering]:translate-x-0! max-sm:motion-safe:data-[exiting]:translate-x-0!",
+    "max-sm:motion-safe:data-[entering]:translate-y-[40%] max-sm:motion-safe:data-[exiting]:translate-y-[40%]",
+  ].join(" "),
+  sheetDialog: "max-sm:rounded-b-none max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]",
   backdrop: [
     "absolute inset-0 bg-black/40",
     "transition-opacity duration-300 ease-out",
@@ -124,17 +132,18 @@ export function Drawer({
   const direction = useDirection();
   const edge = styles.placement[placement];
   const side = placement === "start" || placement === "end";
+  const sheet = placement === "end";
 
   return (
     <AriaModalOverlay
       {...props}
       dir={direction}
       isDismissable={isDismissable}
-      className={cx(styles.overlay, edge.overlay, overlayClassName)}
+      className={cx(styles.overlay, edge.overlay, sheet && styles.sheetOverlay, overlayClassName)}
     >
       <div aria-hidden className={styles.backdrop} />
-      <AriaModal className={cx(styles.modal, edge.modal, side && styles.size[size])}>
-        <ModalDialog aria-label={ariaLabel} className={cx(styles.dialog, className)}>
+      <AriaModal className={cx(styles.modal, edge.modal, side && styles.size[size], sheet && styles.sheetModal)}>
+        <ModalDialog aria-label={ariaLabel} className={cx(styles.dialog, sheet && styles.sheetDialog, className)}>
           {children}
         </ModalDialog>
       </AriaModal>

@@ -1,10 +1,15 @@
 "use client";
 
-import type { ComponentType, ReactNode } from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { RouterProvider } from "react-aria-components";
 import { flexRender, type Header } from "@tanstack/react-table";
+import { RiFilter3Line } from "@remixicon/react";
+import { Counter } from "@/components/base/badges/counter";
+import { Button } from "@/components/base/buttons/button";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/base/modal/modal";
 import { Select, SelectItem } from "@/components/base/select/select";
+import { useI18n } from "@/lib/i18n-client";
 import { ChevronSortDown } from "@/components/foundations/icons/chevrons";
 import { cx } from "@/utils/cx";
 
@@ -15,9 +20,9 @@ export function ListCard({ children, className }: { children: ReactNode; classNa
 
 export function ListToolbar({ count, children }: { count: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex w-full flex-col items-start gap-3 px-3 py-1 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex w-full flex-col items-start gap-3 px-3 py-1 nav:flex-row nav:items-center nav:justify-between">
       <p className="text-body-medium whitespace-nowrap text-text-primary">{count}</p>
-      <div className="flex w-full flex-wrap items-center gap-2.5 sm:w-auto sm:justify-end">{children}</div>
+      <div className="flex w-full items-center gap-2.5 nav:w-auto nav:flex-wrap nav:justify-end">{children}</div>
     </div>
   );
 }
@@ -77,5 +82,48 @@ export function EmptyState({ icon: Icon, title, body, children }: { icon: IconCo
       <p className="max-w-sm text-body-regular text-text-secondary">{body}</p>
       {children}
     </div>
+  );
+}
+
+export type MobileFilter = { key: string; label: string; value: string; onChange: (key: string) => void; options: { key: string; label: string }[] };
+
+/** Phone-only: one "Filtres" button (with a count of active filters) that opens the filters in a bottom sheet. */
+export function MobileFilters({ filters, onReset }: { filters: MobileFilter[]; onReset: () => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const active = filters.filter((f) => f.value !== "all").length;
+  return (
+    <>
+      <Button variant="secondary" leadingIcon={RiFilter3Line} onClick={() => setOpen(true)} className="shrink-0 nav:hidden">
+        {t("mob.filters")}
+        {active > 0 && <Counter color="primary" className="ms-1.5">{active}</Counter>}
+      </Button>
+      <Modal isOpen={open} onOpenChange={setOpen} size="sm" aria-label={t("mob.filters")}>
+        {({ close }) => (
+          <>
+            <ModalHeader title={t("mob.filters")} closeLabel={t("common.close")} />
+            <ModalBody>
+              <div className="grid gap-4 pt-1">
+                {filters.map((f) => (
+                  <Select key={f.key} label={f.label} className="w-full" triggerClassName="w-full" selectedKey={f.value} onSelectionChange={(k) => f.onChange(String(k))}>
+                    {f.options.map((o) => (
+                      <SelectItem key={o.key} id={o.key} textValue={o.label}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </Select>
+                ))}
+              </div>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="secondary" onClick={onReset} disabled={active === 0}>
+                {t("mob.reset")}
+              </Button>
+              <Button onClick={close}>{t("mob.apply")}</Button>
+            </ModalFooter>
+          </>
+        )}
+      </Modal>
+    </>
   );
 }

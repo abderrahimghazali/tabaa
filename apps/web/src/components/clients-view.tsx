@@ -1,5 +1,7 @@
 "use client";
 
+import { MobileActionBar } from "@/components/app/mobile-actions";
+
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { RiAddLine, RiGroupLine } from "@remixicon/react";
@@ -17,7 +19,7 @@ import { groupDigits, ICE_GROUPS } from "@/lib/format";
 import { useI18n } from "@/lib/i18n-client";
 import { cx } from "@/utils/cx";
 import { TopbarActions } from "./frame";
-import { EmptyState, FilterSelect, ListCard, ListToolbar, RouterBoundary, SortHeader, headerLabel } from "./invoice/list-kit";
+import { EmptyState, FilterSelect, MobileFilters, ListCard, ListToolbar, RouterBoundary, SortHeader, headerLabel } from "./invoice/list-kit";
 import { WriteOnly } from "@/components/app/write-only";
 import { useCanWrite } from "@/lib/me-client";
 import { PartyDrawer } from "./party-form";
@@ -107,6 +109,7 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
   });
+  const typeOptions = [{ key: "all", label: t("lists.allTypes") }, ...TYPES.map((k) => ({ key: k, label: t(`partyType.${k}`) }))];
   const rows = table.getRowModel().rows;
   const headers = table.getHeaderGroups()[0]!.headers;
   const totalPages = table.getPageCount();
@@ -120,22 +123,35 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
           </Button>
         </WriteOnly>
       </TopbarActions>
+      <WriteOnly>
+        <MobileActionBar>
+          <Button leadingIcon={RiAddLine} onClick={() => setCreating(true)}>
+            {t("customers.new")}
+          </Button>
+        </MobileActionBar>
+      </WriteOnly>
 
       <ListCard className={totalPages > 1 ? "pb-3" : "pb-0"}>
         <ListToolbar count={<><span className="num">{data.length}</span> {t(data.length === 1 ? "customers.countOne" : "customers.count")}</>}>
-          <FilterSelect
-            label={t("customers.type")}
-            value={type}
-            onChange={(k) => { setType(k); resetPage(); }}
-            options={[{ key: "all", label: t("lists.allTypes") }, ...TYPES.map((k) => ({ key: k, label: t(`partyType.${k}`) }))]}
-          />
+          <div className="hidden nav:contents">
+            <FilterSelect
+              label={t("customers.type")}
+              value={type}
+              onChange={(k) => { setType(k); resetPage(); }}
+              options={typeOptions}
+            />
+          </div>
           <SearchField
             aria-label={t("common.search")}
             clearLabel={t("lists.clearSearch")}
             placeholder={t("customers.search")}
             value={q}
             onChange={(v) => { setQ(v); resetPage(); }}
-            className="min-w-[180px] flex-1 sm:w-[200px] sm:flex-none"
+            className="min-w-0 flex-1 nav:w-[200px] nav:min-w-[180px] nav:flex-none"
+          />
+          <MobileFilters
+            onReset={() => { setType("all"); resetPage(); }}
+            filters={[{ key: "type", label: t("customers.type"), value: type, onChange: (k) => { setType(k); resetPage(); }, options: typeOptions }]}
           />
         </ListToolbar>
 
@@ -147,7 +163,7 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
           </div>
         ) : (
           <>
-            <div className="mt-2 hidden md:block">
+            <div className="mt-2 hidden nav:block">
               <RouterBoundary>
                 <Table aria-label={t("lists.customersTable")} selectionMode="none" className="min-w-[760px]">
                   <TableHeader>
@@ -174,7 +190,7 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
               </RouterBoundary>
             </div>
 
-            <ul className="mt-2 divide-y divide-separator-border border-t border-separator-border md:hidden">
+            <ul className="mt-2 divide-y divide-separator-border border-t border-separator-border nav:hidden">
               {rows.map((row) => {
                 const p = row.original;
                 return (

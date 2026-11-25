@@ -41,7 +41,7 @@ export function MfaPrompt() {
           }
           setDismissed(true);
         }}
-        className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg hover:bg-background-secondary-hover"
+        className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg hover:bg-background-secondary-hover max-nav:-my-2 max-nav:-me-2 max-nav:size-11"
       >
         <RiCloseLine className="size-4" aria-hidden />
       </button>

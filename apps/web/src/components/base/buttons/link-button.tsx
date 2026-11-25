@@ -61,7 +61,7 @@ export type LinkButtonProps = LinkButtonAnchorProps | LinkButtonButtonProps;
 
 const styles = sortCx({
   base: [
-    "inline-flex items-center justify-center gap-1 whitespace-nowrap",
+    "inline-flex items-center justify-center gap-1 whitespace-nowrap max-nav:min-h-11",
     "font-sans select-none cursor-pointer rounded-sm",
     "underline-offset-3 hover:underline",
     "transition-colors duration-150 ease",

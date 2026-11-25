@@ -15,6 +15,7 @@ import {
   RiSettings4Line,
 } from "@remixicon/react";
 import { Kbd } from "@/components/base/kbd/kbd";
+import { usePhone } from "@/lib/use-phone";
 import { CommandPalette, CommandPaletteItem, CommandPaletteSection } from "@/components/base/command-palette/command-palette";
 import { searchAll } from "@/lib/actions";
 import { fmtNumber, groupDigits, ICE_GROUPS } from "@/lib/format";
@@ -42,6 +43,7 @@ const ACTIONS: { id: string; key: Key; icon: typeof RiAddLine }[] = [
 
 export function CommandPaletteHost({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
+  const phone = usePhone();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -99,6 +101,7 @@ export function CommandPaletteHost({ children }: { children: React.ReactNode }) 
         emptyState={t("palette.empty")}
         onAction={(key) => router.push(String(key))}
         footer={
+          phone ? false : (
           <>
             <span className="flex items-center gap-1.5">
               <Kbd aria-label="↑"><RiArrowUpLine className="size-3" aria-hidden /></Kbd>
@@ -110,6 +113,7 @@ export function CommandPaletteHost({ children }: { children: React.ReactNode }) 
               {t("palette.select")}
             </span>
           </>
+          )
         }
       >
         {remote.invoices.length > 0 && (

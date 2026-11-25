@@ -169,15 +169,15 @@ export function MfaSection() {
   return (
     <>
       <Section title={t("mfa.title")} description={on ? t("mfa.onBody") : t("mfa.offBody")}>
-        <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
-          <Chip color={on ? "lime" : "gray"} variant="caption">{on ? t("mfa.on") : t("mfa.off")}</Chip>
+        <div className="flex flex-col gap-3 sm:col-span-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <Chip color={on ? "lime" : "gray"} variant="caption" className="self-start">{on ? t("mfa.on") : t("mfa.off")}</Chip>
           {on ? (
             <>
-              <Button variant="secondary" onClick={() => setRegenerating(true)}>{t("mfa.regenerate")}</Button>
-              <Button variant="secondary" onClick={() => setDisabling(true)}>{t("mfa.disable")}</Button>
+              <Button variant="secondary" className="max-sm:w-full" onClick={() => setRegenerating(true)}>{t("mfa.regenerate")}</Button>
+              <Button variant="secondary" className="max-sm:w-full" onClick={() => setDisabling(true)}>{t("mfa.disable")}</Button>
             </>
           ) : (
-            <Button onClick={() => setEnrol(true)}>{t("mfa.enable")}</Button>
+            <Button className="max-sm:w-full" onClick={() => setEnrol(true)}>{t("mfa.enable")}</Button>
           )}
         </div>
       </Section>

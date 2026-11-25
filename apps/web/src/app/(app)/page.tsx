@@ -13,6 +13,7 @@ import { RecentInvoices, RecentPayments, TopCustomers } from "@/components/dashb
 import { MfaPrompt } from "@/components/app/mfa-prompt";
 import { WriteOnly } from "@/components/app/write-only";
 import { TopbarActions } from "@/components/frame";
+import { MobileActionBar } from "@/components/app/mobile-actions";
 
 export default async function DashboardPage() {
   const { t, locale } = await getT();
@@ -45,9 +46,15 @@ export default async function DashboardPage() {
       </TopbarActions>
 
       <PageHeader
-        title={t("dash.greeting", { name: company.name })}
+        title={
+          <>
+            <span className="max-nav:hidden">{t("dash.greeting", { name: company.name })}</span>
+            <span className="nav:hidden">{t("dash.hi")}</span>
+          </>
+        }
         subtitle={
           <>
+            <span className="mb-0.5 block text-title-3-medium text-text-primary wrap-break-word nav:hidden">{company.name}</span>
             <span className="first-letter:uppercase">{longDate(today, locale)}</span>
             {" · "}
             {summary}
@@ -102,6 +109,14 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
+
+      <WriteOnly>
+        <MobileActionBar>
+          <ButtonLink href="/factures/nouvelle" leadingIcon={RiAddLine}>
+            {t("invoices.new")}
+          </ButtonLink>
+        </MobileActionBar>
+      </WriteOnly>
     </div>
   );
 }

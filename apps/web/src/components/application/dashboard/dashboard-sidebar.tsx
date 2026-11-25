@@ -162,7 +162,7 @@ export function DashboardSidebar({
               </Collapsible>
             </span>
             <Collapsible collapsed={collapsed}>
-              <Kbd dir="ltr">⌘K</Kbd>
+              <Kbd dir="ltr" className="max-nav:hidden">⌘K</Kbd>
             </Collapsible>
           </button>
 

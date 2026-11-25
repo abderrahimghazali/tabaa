@@ -103,7 +103,7 @@ export function BreadcrumbItem({
   }
 
   const interactiveClass = cx(
-    "-mx-1 flex items-center gap-1.5 rounded-md px-1 py-0.5 text-caption-1-medium whitespace-nowrap text-text-tertiary",
+    "-mx-1 flex items-center gap-1.5 rounded-md px-1 py-0.5 max-nav:min-h-11 max-nav:min-w-11 max-nav:justify-center max-nav:px-2 text-caption-1-medium whitespace-nowrap text-text-tertiary",
     "transition-colors duration-150 ease outline-none",
     "hover:bg-background-primary-hover hover:text-text-secondary",
     "focus-visible:ring-2 focus-visible:ring-border-focus-ring",

@@ -66,7 +66,7 @@ type IconComponent = ComponentType<{ className?: string; "aria-hidden"?: boolean
 export type ModalSize = "sm" | "md" | "lg" | "xl";
 
 const styles = sortCx({
-  overlay: "group/modal fixed inset-x-0 top-0 z-100 flex h-(--visual-viewport-height) items-center justify-center p-4 sm:p-6",
+  overlay: "group/modal fixed inset-x-0 top-0 z-100 flex h-(--visual-viewport-height) items-center justify-center p-4 max-sm:items-end max-sm:p-0 sm:p-6",
   backdrop: [
     "absolute inset-0 bg-black/70",
     "transition-opacity duration-300 ease-out",
@@ -78,6 +78,10 @@ const styles = sortCx({
     "data-[entering]:opacity-0 data-[exiting]:opacity-0",
     "motion-safe:data-[entering]:scale-[0.85] motion-safe:data-[entering]:blur-[4px]",
     "motion-safe:data-[exiting]:scale-[0.85] motion-safe:data-[exiting]:blur-[4px]",
+    // Phones: a bottom sheet that slides up instead of scaling in.
+    "max-sm:motion-safe:data-[entering]:scale-100 max-sm:motion-safe:data-[exiting]:scale-100",
+    "max-sm:motion-safe:data-[entering]:translate-y-[40%] max-sm:motion-safe:data-[exiting]:translate-y-[40%]",
+    "max-sm:max-w-none! max-sm:max-h-[92%]",
   ].join(" "),
   dialog: [
     // overflow-CLIP, not hidden: a hidden box is still programmatically
@@ -89,6 +93,7 @@ const styles = sortCx({
     // Settings Modal's surface: page white in light mode, and in dark mode a
     // ground darker than the inputs and menus it holds, so they keep an edge.
     "rounded-3xl border border-separator-border bg-background-full shadow-xs",
+    "max-sm:rounded-b-none max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]",
   ].join(" "),
   size: {
     sm: "max-w-[400px]",
@@ -323,6 +328,8 @@ export function ModalFooter({ className, children }: { className?: string; child
         // row from sm up. 8px extra over the dialog's gap-2 sets the actions
         // 16px from the content, the panel's own inset.
         "mt-2 flex shrink-0 flex-col-reverse gap-2 px-4 sm:flex-row sm:items-center sm:justify-end",
+        // Phones: the primary action (last in the DOM) spans the top row; the others share the row below.
+        "max-sm:grid max-sm:grid-cols-2 max-sm:[&>*:last-child]:order-first max-sm:[&>*:last-child]:col-span-2 max-sm:[&>*:first-child:nth-last-child(2)]:col-span-2",
         className,
       )}
     >

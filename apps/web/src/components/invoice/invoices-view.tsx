@@ -37,7 +37,7 @@ import { TABS, type Tab as TabKey } from "@/lib/invoice-tabs";
 import { statusOf, type StatusKey } from "@/lib/status";
 import { cx } from "@/utils/cx";
 import { DueCell, StatusChip } from "./status";
-import { EmptyState, FilterSelect, ListCard, ListToolbar, RouterBoundary, SortHeader, headerLabel } from "./list-kit";
+import { EmptyState, MobileFilters, FilterSelect, ListCard, ListToolbar, RouterBoundary, SortHeader, headerLabel } from "./list-kit";
 
 const PAGE = 10;
 const PERIODS = ["month", "d30", "quarter", "year"] as const;
@@ -71,7 +71,7 @@ function RowMenu({ inv, onIssue, onCredit }: { inv: Row; onIssue: () => void; on
       <DropdownTrigger
         aria-label={t("common.actions")}
         className={cx(
-          "relative inline-flex size-8 shrink-0 items-center justify-center rounded-2lg",
+          "relative inline-flex size-8 shrink-0 items-center justify-center rounded-2lg max-nav:size-11",
           "border border-border-button-default bg-background-primary-default text-foreground-icon-primary shadow-xs",
           "transition-[background-color,border-color,box-shadow,color] duration-150 ease",
           "hover:border-border-button-hover hover:bg-background-primary-hover",
@@ -299,8 +299,7 @@ export function InvoicesView({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
-      <div className="max-w-full overflow-x-auto [scrollbar-width:none]">
-      <Tabs selectedKey={tab} onSelectionChange={(k) => set(setTab)(k as TabKey)} className="min-w-max">
+      <Tabs selectedKey={tab} onSelectionChange={(k) => set(setTab)(k as TabKey)}>
         <TabList aria-label={t("invoices.filters")}>
           {TABS.map((x) => (
             <Tab key={x} id={x} count={counts[x]}>
@@ -309,20 +308,29 @@ export function InvoicesView({
           ))}
         </TabList>
       </Tabs>
-      </div>
 
       <ListCard className={totalPages > 1 ? "pb-3" : "pb-0"}>
         <ListToolbar count={<><span className="num">{data.length}</span> {t(data.length === 1 ? "invoices.countOne" : "invoices.count")}</>}>
-          <FilterSelect label={t("filter.status")} value={status} onChange={set(setStatus)} options={statusOptions} />
-          {!hideCustomer && <FilterSelect label={t("filter.customer")} value={customer} onChange={set(setCustomer)} options={customerOptions} />}
-          <FilterSelect label={t("filter.period")} value={period} onChange={set(setPeriod)} options={periodOptions} />
+          <div className="hidden nav:contents">
+            <FilterSelect label={t("filter.status")} value={status} onChange={set(setStatus)} options={statusOptions} />
+            {!hideCustomer && <FilterSelect label={t("filter.customer")} value={customer} onChange={set(setCustomer)} options={customerOptions} />}
+            <FilterSelect label={t("filter.period")} value={period} onChange={set(setPeriod)} options={periodOptions} />
+          </div>
           <SearchField
             aria-label={t("common.search")}
             clearLabel={t("lists.clearSearch")}
             placeholder={t("invoices.search")}
             value={q}
             onChange={set(setQ)}
-            className="min-w-[180px] flex-1 sm:w-[200px] sm:flex-none"
+            className="min-w-0 flex-1 nav:w-[200px] nav:min-w-[180px] nav:flex-none"
+          />
+          <MobileFilters
+            onReset={() => { setStatus("all"); setCustomer("all"); setPeriod("all"); resetPage(); }}
+            filters={[
+              { key: "status", label: t("filter.status"), value: status, onChange: set(setStatus), options: statusOptions },
+              ...(hideCustomer ? [] : [{ key: "customer", label: t("filter.customer"), value: customer, onChange: set(setCustomer), options: customerOptions }]),
+              { key: "period", label: t("filter.period"), value: period, onChange: set(setPeriod), options: periodOptions },
+            ]}
           />
         </ListToolbar>
 
@@ -340,7 +348,7 @@ export function InvoicesView({
           </div>
         ) : (
           <>
-            <div className="mt-2 hidden md:block">
+            <div className="mt-2 hidden nav:block">
               <RouterBoundary>
                 <Table aria-label={t("lists.invoicesTable")} selectionMode="none" className="min-w-[860px] table-fixed">
                   <TableHeader>
@@ -367,7 +375,7 @@ export function InvoicesView({
               </RouterBoundary>
             </div>
 
-            <ul className="mt-2 divide-y divide-separator-border border-t border-separator-border md:hidden">
+            <ul className="mt-2 divide-y divide-separator-border border-t border-separator-border nav:hidden">
               {rows.map((row) => {
                 const inv = row.original;
                 return (

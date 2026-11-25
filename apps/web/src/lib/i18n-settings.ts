@@ -62,4 +62,13 @@ export const settings = {
   "co.m.bankName": ["nom de la banque non renseigné", "اسم البنك غير مُدخل"],
   "co.previewAria": ["Aperçu de l'en-tête et du pied de vos factures", "معاينة رأس فواتيرك وتذييلها"],
   "co.skel": ["Lignes de la facture", "بنود الفاتورة"],
+  "dash.hi": ["Bonjour", "مرحبًا"],
+  "mob.more": ["Plus", "المزيد"],
+  "mob.moreActions": ["Plus d'actions", "المزيد من الإجراءات"],
+  "mob.filters": ["Filtres", "عوامل التصفية"],
+  "mob.reset": ["Réinitialiser", "إعادة التعيين"],
+  "mob.apply": ["Afficher les résultats", "عرض النتائج"],
+  "mob.search": ["Rechercher", "بحث"],
+  "mob.back": ["Retour", "رجوع"],
+  "mob.tapAgain": ["Appuyez à nouveau pour ouvrir", "اضغط مرة أخرى للفتح"],
 } as const satisfies Record<string, readonly [string, string]>;

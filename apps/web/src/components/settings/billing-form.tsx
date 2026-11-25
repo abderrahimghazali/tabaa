@@ -1,5 +1,7 @@
 "use client";
 
+import { MobileActionBar } from "@/components/app/mobile-actions";
+
 import { useState, useTransition } from "react";
 import { activeRules, type ApiError, type Company, type CompanyInput, type Language } from "@facture/core";
 import { Button } from "@/components/base/buttons/button";
@@ -57,6 +59,13 @@ export function BillingForm({ company }: { company: Company }) {
           </Button>
         </AdminOnly>
       </TopbarActions>
+      <AdminOnly>
+        <MobileActionBar>
+          <Button type="submit" form="billing-form" disabled={pending}>
+            {t("common.save")}
+          </Button>
+        </MobileActionBar>
+      </AdminOnly>
       <form id="billing-form" inert={!canWrite || undefined}  onSubmit={submit} noValidate className="grid max-w-3xl gap-4">
         <IssueList error={error} />
         <Section title={t("settings.billing.defaultsTitle")} description={t("settings.billing.defaultsHint")}>

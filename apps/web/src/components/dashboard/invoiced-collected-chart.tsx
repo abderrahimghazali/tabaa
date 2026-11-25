@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Dashboard } from "@facture/core";
 import { Chip } from "@/components/base/badges/chip";
@@ -25,7 +25,14 @@ const subscribeMotion = (cb: () => void) => {
 export function InvoicedCollectedChart({ monthly }: { monthly: Dashboard["monthly"] }) {
   const { t, locale } = useI18n();
   const [active, setActive] = useState<number | null>(null);
-  const reduce = useSyncExternalStore(subscribeMotion, () => window.matchMedia("(prefers-reduced-motion: reduce)").matches, () => false);
+  const prefersReduced = useSyncExternalStore(subscribeMotion, () => window.matchMedia("(prefers-reduced-motion: reduce)").matches, () => false);
+  // The bars draw in once. A later resize (a phone's address bar hiding) must not replay the animation from empty.
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setSettled(true), 900);
+    return () => window.clearTimeout(id);
+  }, []);
+  const reduce = prefersReduced || settled;
 
   const data = useMemo(
     () => monthly.map((m) => ({ key: m.month, label: monthLabel(m.month, locale), invoiced: Number(m.invoiced), collected: Number(m.collected) })),

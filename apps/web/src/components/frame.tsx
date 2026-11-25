@@ -11,6 +11,7 @@ import { IconButton } from "@/components/base/buttons/icon-button";
 import { Drawer } from "@/components/base/drawer/drawer";
 import type { Me } from "@facture/core";
 import { useI18n } from "@/lib/i18n-client";
+import { cx } from "@/utils/cx";
 import type { Key } from "@/lib/i18n";
 import { BrandMark } from "./ui/brand";
 import { CommandPaletteHost, usePaletteTrigger } from "./command-palette";
@@ -59,8 +60,9 @@ function Topbar() {
     if (UUID.test(p)) crumbs.push({ href, text: label ?? "…" });
     else if (SEGMENTS[p]) crumbs.push({ href, text: t(SEGMENTS[p]) });
   });
+  const showOnPhone = crumbs.length >= 2 && parts[0] !== "parametres";
   return (
-    <div className="flex min-h-14 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 nav:px-8">
+    <div className={cx("min-h-14 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 sm:px-6 nav:flex nav:px-8", showOnPhone ? "flex" : "hidden")}>
       <Breadcrumb aria-label={t("nav.breadcrumb")} className="w-full min-w-0 nav:w-auto nav:flex-1">
         <BreadcrumbItem icon={RiHome5Line} href="/" current={parts.length === 0}>
           <span className={parts.length ? "sr-only" : undefined}>{t("nav.dashboard")}</span>
@@ -71,7 +73,7 @@ function Topbar() {
           </BreadcrumbItem>
         ))}
       </Breadcrumb>
-      <div id="topbar-actions" className="flex flex-wrap items-center gap-2" />
+      <div id="topbar-actions" className="hidden flex-wrap items-center gap-2 nav:flex" />
     </div>
   );
 }
@@ -129,7 +131,7 @@ export function Frame({ me, drafts, overdue, children }: { me: Me; drafts: numbe
           </div>
 
           <div className="min-w-0 flex-1">
-            <header className="flex h-14 items-center justify-between gap-3 px-4 nav:hidden">
+            <header className="flex h-14 items-center justify-between gap-3 px-4 sm:px-6 nav:hidden">
               <span className="flex items-center gap-2.5">
                 <BrandMark size={28} />
                 <span className="brand-word text-[21px] leading-none text-text-primary">{t("brand.name")}</span>
@@ -140,7 +142,7 @@ export function Frame({ me, drafts, overdue, children }: { me: Me; drafts: numbe
               </Drawer>
             </header>
             <Topbar />
-            <main className="mx-auto max-w-[1280px] px-4 pt-2 pb-16 nav:px-8">
+            <main className="mx-auto max-w-[1280px] px-4 pt-1 pb-28 sm:px-6 nav:px-8 nav:pt-2 nav:pb-16">
               {me.role === "VIEWER" && (
                 <p role="status" className="mb-4 rounded-xl bg-status-blue-background px-3 py-2.5 text-body-medium text-status-blue-text">
                   {t("role.viewerNote")}

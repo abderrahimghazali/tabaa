@@ -15,7 +15,7 @@ export async function AuthFrame({ children }: { children: React.ReactNode }) {
           </span>
           <LangSwitch />
         </header>
-        <main className="flex flex-1 items-center justify-center py-10">
+        <main className="flex flex-1 items-center justify-center py-10 max-sm:items-start max-sm:pt-8">
           <div className="w-full max-w-[400px]">{children}</div>
         </main>
       </div>

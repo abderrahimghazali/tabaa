@@ -50,7 +50,7 @@ export interface IconLinkButtonProps
 
 const styles = sortCx({
   base: [
-    "relative inline-flex shrink-0 items-center justify-center overflow-visible rounded-2lg",
+    "relative inline-flex shrink-0 items-center justify-center overflow-visible rounded-2lg max-nav:min-h-11 max-nav:min-w-11",
     "bg-background-primary-default text-foreground-icon-primary",
     "border border-border-button-default shadow-xs",
     "select-none cursor-pointer",

@@ -87,7 +87,7 @@ export function TopCustomers({ items }: { items: Dashboard["topCustomers"] }) {
       {items.length === 0 ? (
         <p className="px-5 pt-4 pb-8 text-center text-body-regular text-text-secondary">{t("dash.noCustomers")}</p>
       ) : (
-        <ul className="grid gap-1 px-2 pb-2">
+        <ul className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 pb-2">
           {items.map((c) => (
             <li key={c.customerId}>
               <Link href={`/clients/${c.customerId}`} className="block rounded-xl px-3 py-2.5 outline-none transition-colors hover:bg-background-secondary-default focus-visible:ring-2 focus-visible:ring-border-focus-ring">

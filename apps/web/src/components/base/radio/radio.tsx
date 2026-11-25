@@ -157,7 +157,7 @@ export function Radio({ className, children, size = "md", ref, ...props }: Radio
       {...props}
       className={(state) =>
         cx(
-          "group inline-flex items-center select-none",
+          "group inline-flex items-center select-none max-nav:min-h-11",
           s.gap,
           state.isDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
           typeof className === "function" ? className(state) : className,
