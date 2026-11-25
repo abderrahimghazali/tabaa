@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://abderrahimghazali.github.io/tabaa/">Où en est la réforme ? Le point à jour, daté et sourcé →</a></strong>
+  <strong><a href="https://abderrahimghazali.github.io/facturation-electronique-maroc/">Où en est la réforme ? Le point à jour, daté et sourcé →</a></strong>
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 
 ## Pourquoi Tabaa
 
-Le Maroc prépare la généralisation de la **facture électronique** : chaque facture sera transmise à une plateforme de la Direction Générale des Impôts (DGI), validée, puis remise au client, au format structuré **UBL 2.1**. La base légale existe (article 145-IX du Code Général des Impôts) ; le décret d'application et les spécifications techniques ne sont pas encore publiés. L'état de la réforme est suivi sur [une page dédiée](https://abderrahimghazali.github.io/tabaa/), mise à jour à chaque évolution.
+Le Maroc prépare la généralisation de la **facture électronique** : chaque facture sera transmise à une plateforme de la Direction Générale des Impôts (DGI), validée, puis remise au client, au format structuré **UBL 2.1**. La base légale existe (article 145-IX du Code Général des Impôts) ; le décret d'application et les spécifications techniques ne sont pas encore publiés. L'état de la réforme est suivi sur [une page dédiée](https://abderrahimghazali.github.io/facturation-electronique-maroc/), mise à jour à chaque évolution.
 
 Tabaa (طابع, « le cachet ») est un logiciel de facturation pensé pour cette transition :
 

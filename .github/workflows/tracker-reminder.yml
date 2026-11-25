@@ -31,7 +31,7 @@ jobs:
           - [ ] Bulletin officiel : un décret d'application a-t-il été publié ?
           - [ ] Portail de la DGI (rubrique Actualités) : annonce, calendrier, spécifications ?
           - [ ] Presse : nouvelles déclarations de la DGI, du ministère ou de la CGEM ?
-          - [ ] Mettre à jour `apps/site/src/data/reforme.ts` : faits, chronologie, sources
+          - [ ] Mettre à jour `src/data/reforme.ts` dans le dépôt `abderrahimghazali/abderrahimghazali.github.io` : faits, chronologie, sources
           - [ ] Mettre à jour `lastVerified` (même si rien n'a changé) et ajouter une ligne à `changelog`
           BODY
           gh issue create --title "Vérifier le suivi de la réforme ($today)" --label suivi-reforme --body-file body.md
