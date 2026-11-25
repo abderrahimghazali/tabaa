@@ -1,0 +1,50 @@
+---
+import { Font } from "astro:assets";
+import Stamp from "../components/Stamp.astro";
+import BrandMark from "../components/BrandMark.astro";
+import "../styles/global.css";
+import { lastVerified, status } from "../data/reforme";
+import { formatDate } from "../lib";
+
+// Development only: the page the Open Graph image is captured from (`pnpm --filter @facture/site og`).
+export function getStaticPaths() {
+  return import.meta.env.DEV ? [{ params: { card: "og-card" } }] : [];
+}
+---
+
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Carte de partage</title>
+    <Font cssVariable="--font-inter" />
+    <Font cssVariable="--font-plex-mono" />
+    <Font cssVariable="--font-bricolage" />
+    <style is:global>
+      html, body { margin: 0; background: #fff; }
+      :root { color-scheme: light; }
+      .card { width: 1200px; height: 630px; box-sizing: border-box; padding: 56px 72px; display: grid; grid-template-columns: 1fr 360px; gap: 40px; align-items: center; background: #fff; color: #0a0a0a; overflow: hidden; position: relative; }
+      .card .brand { position: absolute; top: 48px; left: 72px; display: flex; gap: 12px; align-items: center; }
+      .card .brand span { font-family: var(--display); font-weight: 700; font-size: 30px; letter-spacing: -0.03em; }
+      .card h1 { font-size: 26px; font-weight: 500; color: #525252; line-height: 1.35; margin: 0 0 20px; max-width: 640px; }
+      .card .v { font-size: 68px; font-weight: 600; line-height: 1.03; letter-spacing: -0.035em; margin: 0; max-width: 640px; }
+      .card .d { margin-top: 32px; padding-top: 18px; border-top: 1px solid #e5e5e5; font-size: 22px; color: #525252; max-width: 520px; }
+      .card .d b { font-family: var(--mono); font-weight: 500; color: #0a0a0a; }
+      .card .st { display: flex; justify-content: center; }
+      .card .stamp { width: 340px; height: 340px; mix-blend-mode: multiply; }
+      .card .copy { padding-top: 40px; }
+    </style>
+  </head>
+  <body>
+    <div class="card" id="card">
+      <div class="brand"><BrandMark size={36} /><span>Tabaa</span></div>
+      <div class="copy">
+        <h1>Facturation électronique au Maroc : où en est la réforme ?</h1>
+        <p class="v">{status.headline}</p>
+        <p class="d">Dernière vérification : <b>{formatDate(lastVerified)}</b></p>
+      </div>
+      <div class="st"><Stamp word={status.stamp.word} ring={status.stamp.ring} city={status.stamp.city} date={lastVerified.split("-").reverse().join("/")} idPrefix="og" /></div>
+    </div>
+  </body>
+</html>

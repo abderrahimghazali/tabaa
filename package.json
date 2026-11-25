@@ -3,12 +3,13 @@
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build",
-    "test": "turbo run test",
-    "typecheck": "turbo run typecheck",
+    "dev": "turbo run dev --filter=!@facture/site",
+    "build": "turbo run build --filter=!@facture/site",
+    "test": "turbo run test --filter=!@facture/site",
+    "typecheck": "turbo run typecheck --filter=!@facture/site",
     "db:up": "docker compose up -d",
-    "db:down": "docker compose down"
+    "db:down": "docker compose down",
+    "site:dev": "pnpm --filter @facture/site dev"
   },
   "devDependencies": {
     "turbo": "2.11.13"

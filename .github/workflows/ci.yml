@@ -43,7 +43,8 @@ jobs:
         run: cp .env.example .env
       - run: pnpm --filter @facture/core build
       - name: Typecheck
-        run: pnpm -r typecheck
+        # The tracker site is checked by its own workflow (pages.yml), on the Node version Astro needs.
+        run: pnpm -r --filter '!@facture/site' typecheck
       - name: Domain tests
         run: pnpm --filter @facture/core test
       - name: Web unit tests

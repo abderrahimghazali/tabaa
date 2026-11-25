@@ -1,0 +1,37 @@
+name: Tracker reminder
+
+on:
+  schedule:
+    - cron: "0 7 1,15 * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Open a review issue unless one is already open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          open=$(gh issue list --label suivi-reforme --state open --json number --jq 'length')
+          if [ "$open" != "0" ]; then
+            echo "An issue labelled suivi-reforme is already open; nothing to do."
+            exit 0
+          fi
+          gh label create suivi-reforme --description "Suivi de la réforme de la facturation électronique" --color 2B3FD6 2>/dev/null || true
+          today=$(date -u +%Y-%m-%d)
+          cat > body.md <<'BODY'
+          Vérification périodique de la page de suivi de la réforme de la facturation électronique.
+
+          - [ ] Bulletin officiel : un décret d'application a-t-il été publié ?
+          - [ ] Portail de la DGI (rubrique Actualités) : annonce, calendrier, spécifications ?
+          - [ ] Presse : nouvelles déclarations de la DGI, du ministère ou de la CGEM ?
+          - [ ] Mettre à jour `apps/site/src/data/reforme.ts` : faits, chronologie, sources
+          - [ ] Mettre à jour `lastVerified` (même si rien n'a changé) et ajouter une ligne à `changelog`
+          BODY
+          gh issue create --title "Vérifier le suivi de la réforme ($today)" --label suivi-reforme --body-file body.md

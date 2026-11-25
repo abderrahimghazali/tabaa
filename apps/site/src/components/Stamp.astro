@@ -1,0 +1,60 @@
+---
+interface Props {
+  word: string;
+  ring: string;
+  city: string;
+  date?: string;
+  size?: number;
+  idPrefix?: string;
+}
+const { word, ring, city, date, size = 240, idPrefix = "stamp" } = Astro.props;
+
+// The ink follows the status word: amber while the decree is awaited, blue once it is published.
+const tones: Record<string, string> = { "EN ATTENTE": "amber", "PUBLIÉ": "blue", "EN VIGUEUR": "blue" };
+const tone = tones[word] ?? "neutral";
+
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+const fit = (len: number, max: number, room: number, em: number) => Math.min(max, room / (Math.max(len, 1) * em));
+const top = clip(ring.toUpperCase(), 30);
+const bottom = clip(city.toUpperCase(), 30);
+const wordSize = fit(word.length, 24, 100, 0.74);
+const label = `Cachet : ${word.toLowerCase()}, ${ring.toLowerCase()}, ${city.toLowerCase()}`;
+---
+
+<svg
+  class={`stamp stamp-${tone}`}
+  viewBox="0 0 200 200"
+  width={size}
+  height={size}
+  role="img"
+  aria-label={label}
+>
+  <defs>
+    <filter id={`${idPrefix}-ink`} filterUnits="userSpaceOnUse" x="-10" y="-10" width="220" height="220">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="4" result="grain" />
+      <feDisplacementMap in="SourceGraphic" in2="grain" scale="2.4" result="rough" />
+      <feTurbulence type="fractalNoise" baseFrequency="0.03 0.045" numOctaves="3" seed="11" result="blot" />
+      <feColorMatrix in="blot" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.5 1.78" result="uneven" />
+      <feComposite in="rough" in2="uneven" operator="in" />
+    </filter>
+    <path id={`${idPrefix}-top`} d="M 29.3 100 A 70.7 70.7 0 0 1 170.7 100"></path>
+    <path id={`${idPrefix}-bot`} d="M 20.7 100 A 79.3 79.3 0 0 0 179.3 100"></path>
+  </defs>
+  <g filter={`url(#${idPrefix}-ink)`} fill="currentColor" stroke="currentColor" class="stamp-type" aria-hidden="true">
+    <circle cx="100" cy="100" r="95" fill="none" stroke-width="3.6"></circle>
+    <circle cx="100" cy="100" r="88.5" fill="none" stroke-width="1.2"></circle>
+    <circle cx="100" cy="100" r="62" fill="none" stroke-width="1.2"></circle>
+    <text font-size={fit(top.length, 12, 190, 0.8)} font-weight="700" letter-spacing="1.4" stroke="none" text-anchor="middle">
+      <textPath href={`#${idPrefix}-top`} startOffset="50%">{top}</textPath>
+    </text>
+    <text font-size={fit(bottom.length, 12, 190, 0.8)} font-weight="700" letter-spacing="1.4" stroke="none" text-anchor="middle">
+      <textPath href={`#${idPrefix}-bot`} startOffset="50%">{bottom}</textPath>
+    </text>
+    <path d="M 21 100 l 3.5 -3.5 l 3.5 3.5 l -3.5 3.5 z" stroke="none" transform="translate(-4 0)"></path>
+    <path d="M 172 100 l 3.5 -3.5 l 3.5 3.5 l -3.5 3.5 z" stroke="none" transform="translate(4 0)"></path>
+    <line x1="46" x2="154" y1="83" y2="83" stroke-width="1.6"></line>
+    <line x1="46" x2="154" y1="117" y2="117" stroke-width="1.6"></line>
+    <text x="100" y="100" dy="0.36em" text-anchor="middle" font-weight="700" font-size={wordSize} letter-spacing="1.5" stroke="none">{word}</text>
+    {date && <text x="100" y="134" text-anchor="middle" font-size="9.5" font-weight="500" stroke="none" letter-spacing="0.5" class="stamp-date">{date}</text>}
+  </g>
+</svg>
