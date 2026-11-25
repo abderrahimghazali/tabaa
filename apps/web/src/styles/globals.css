@@ -1192,34 +1192,21 @@ html[dir="rtl"] .grow-x-rtl {
   }
 }
 
+.print-portal {
+  display: none;
+}
+
 @media print {
-  @page {
-    size: A4;
-    margin: 0;
-  }
   html,
   body {
     background: #fff !important;
   }
-  body * {
-    visibility: hidden;
+  /* Where a page provides a print version, print only that. */
+  body:has(> .print-portal) > :not(.print-portal) {
+    display: none !important;
   }
-  .print-sheet,
-  .print-sheet * {
-    visibility: visible;
-  }
-  .print-sheet {
-    position: absolute !important;
-    inset-block-start: 0;
-    inset-inline-start: 0;
-    width: 210mm !important;
-    height: auto !important;
-    transform: none !important;
-    box-shadow: none !important;
-  }
-  .print-frame {
-    height: auto !important;
-    overflow: visible !important;
+  .print-portal {
+    display: block;
   }
 }
 
@@ -1233,10 +1220,6 @@ html[dir="rtl"] .grow-x-rtl {
 }
 
 @media print {
-  .pdf-root,
-  .pdf-root * {
-    visibility: visible;
-  }
   .pdf-root thead {
     display: table-header-group;
   }

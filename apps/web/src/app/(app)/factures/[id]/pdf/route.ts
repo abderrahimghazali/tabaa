@@ -5,8 +5,12 @@ import { draftPdf, issuedPdf } from "@/lib/invoice-pdf";
 import { PdfTimeout, PdfUnavailable } from "@/lib/pdf-render";
 import { getT } from "@/lib/locale";
 
-const fail = (status: number, code: string, message: string) =>
-  Response.json({ code, message }, { status, headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+// Opened in a browser tab, so failures are a readable sentence rather than JSON.
+const fail = (status: number, message: string) =>
+  new Response(message, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+  });
 
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
 
@@ -22,7 +26,7 @@ export async function GET(req: Request, ctx: RouteContext<"/factures/[id]/pdf">)
     return new Response(file.bytes as BodyInit, {
       headers: {
         "content-type": "application/pdf",
-        "content-disposition": `attachment; filename="${name}.pdf"`,
+        "content-disposition": `inline; filename="${name}.pdf"`,
         "content-length": String(file.bytes.byteLength),
         "cache-control": "private, no-store",
         "x-content-type-options": "nosniff",
@@ -32,8 +36,8 @@ export async function GET(req: Request, ctx: RouteContext<"/factures/[id]/pdf">)
   } catch (e) {
     unstable_rethrow(e);
     if (e instanceof ApiFailure && e.status === 404) return new Response("Not found", { status: 404 });
-    if (e instanceof PdfUnavailable) return fail(503, "PDF_UNAVAILABLE", t("pdf.unavailable"));
-    if (e instanceof PdfTimeout) return fail(504, "PDF_TIMEOUT", t("pdf.timeout"));
-    return fail(502, "PDF_FAILED", t("pdf.failed"));
+    if (e instanceof PdfUnavailable) return fail(503, t("pdf.unavailable"));
+    if (e instanceof PdfTimeout) return fail(504, t("pdf.timeout"));
+    return fail(502, t("pdf.failed"));
   }
 }

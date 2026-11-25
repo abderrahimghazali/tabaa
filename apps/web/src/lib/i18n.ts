@@ -219,7 +219,7 @@ const base = {
   "invoice.creditCreatedToast": ["Brouillon d'avoir créé", "تم إنشاء مسودة الإشعار الدائن"],
   "invoice.ubl": ["Télécharger l'UBL", "تنزيل UBL"],
   "invoice.print": ["Imprimer", "طباعة"],
-  "invoice.pdf": ["Télécharger le PDF", "تنزيل PDF"],
+  "invoice.pdf": ["Voir le PDF", "عرض PDF"],
   "pdf.preparing": ["Préparation du PDF…", "جارٍ إعداد ملف PDF…"],
   "pdf.failed": ["Le PDF n'a pas pu être généré. Réessayez dans un instant.", "تعذر إنشاء ملف PDF. أعد المحاولة بعد لحظة."],
   "pdf.unavailable": ["La génération de PDF n'est pas disponible sur ce serveur pour le moment.", "إنشاء ملفات PDF غير متاح على هذا الخادم حاليًا."],

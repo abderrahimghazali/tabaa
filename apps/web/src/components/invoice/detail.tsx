@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { RiAddLine, RiCloseCircleLine, RiDeleteBinLine, RiDownload2Line, RiEditLine, RiPrinterLine } from "@remixicon/react";
+import { RiAddLine, RiCloseCircleLine, RiDeleteBinLine, RiDownload2Line, RiEditLine, RiFilePdf2Line, RiPrinterLine } from "@remixicon/react";
 import { PaymentMethod, type ApiError, type Invoice } from "@facture/core";
 import { Card, PageHeader } from "@/components/app/layout";
 import { Money } from "@/components/app/money";
@@ -26,7 +26,7 @@ import { issuesAt } from "@/lib/result";
 import { statusOf } from "@/lib/status";
 import { cx } from "@/utils/cx";
 import { DateField, DecimalField } from "./fields";
-import { pdfIcon, usePdfDownload } from "./pdf-download";
+import { openPdf, PrintPortal } from "./pdf-download";
 import { InvoiceSheet, type SheetModel } from "./invoice-sheet";
 import { StatusChip, dueInfo } from "./status";
 
@@ -52,7 +52,6 @@ export function InvoiceDetail({
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [payOpen, setPayOpen] = useState(!!openPayment);
   const [error, setError] = useState<ApiError | null>(null);
-  const pdf = usePdfDownload(invoice.id);
 
   const status = statusOf(invoice);
   const isDraft = invoice.state === "DRAFT";
@@ -151,10 +150,10 @@ export function InvoiceDetail({
       <TopbarActions>
         {isDraft ? (
           <>
-            <Button variant="secondary" leadingIcon={pdfIcon(pdf.busy)} onClick={pdf.download} aria-disabled={pdf.busy} className="max-[560px]:hidden">
+            <Button variant="secondary" leadingIcon={RiFilePdf2Line} onClick={() => openPdf(invoice.id)} className="max-[560px]:hidden">
               {t("invoice.pdf")}
             </Button>
-            <Button variant="secondary" iconOnly leadingIcon={pdfIcon(pdf.busy)} onClick={pdf.download} aria-disabled={pdf.busy} aria-label={t("invoice.pdf")} className="min-[561px]:hidden" />
+            <Button variant="secondary" iconOnly leadingIcon={RiFilePdf2Line} onClick={() => openPdf(invoice.id)} aria-label={t("invoice.pdf")} className="min-[561px]:hidden" />
             {canWrite && (
               <>
             <ButtonLink variant="secondary" href={`/factures/${invoice.id}/modifier`} leadingIcon={RiEditLine} className="max-[560px]:hidden">
@@ -169,10 +168,10 @@ export function InvoiceDetail({
           </>
         ) : (
           <>
-            <Button variant="secondary" leadingIcon={pdfIcon(pdf.busy)} onClick={pdf.download} aria-disabled={pdf.busy} className="max-[560px]:hidden">
+            <Button variant="secondary" leadingIcon={RiFilePdf2Line} onClick={() => openPdf(invoice.id)} className="max-[560px]:hidden">
               {t("invoice.pdf")}
             </Button>
-            <Button variant="secondary" iconOnly leadingIcon={pdfIcon(pdf.busy)} onClick={pdf.download} aria-disabled={pdf.busy} aria-label={t("invoice.pdf")} className="min-[561px]:hidden" />
+            <Button variant="secondary" iconOnly leadingIcon={RiFilePdf2Line} onClick={() => openPdf(invoice.id)} aria-label={t("invoice.pdf")} className="min-[561px]:hidden" />
             <ButtonLink variant="secondary" href={`/factures/${invoice.id}/ubl`} download leadingIcon={RiDownload2Line} className="max-[560px]:hidden">
               {t("invoice.ubl")}
             </ButtonLink>
@@ -323,6 +322,7 @@ export function InvoiceDetail({
           <InvoiceSheet model={model} />
         </div>
       </div>
+      <PrintPortal model={{ ...model, status: isDraft ? "draft" : isCredit ? "credit" : "issued" }} />
 
       {ct && confirm && (
         <AlertDialog
