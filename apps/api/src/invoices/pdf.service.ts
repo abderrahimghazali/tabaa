@@ -21,6 +21,8 @@ export class PdfService {
   }
 
   async store(id: string, content: Buffer) {
+    // The controller checks this too; repeated here so the size and hash below never run on anything but bytes.
+    if (!Buffer.isBuffer(content)) throw new ApiException(415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type application/pdf requis.');
     await this.issued(id);
     if (content.subarray(0, 5).toString('latin1') !== '%PDF-') {
       throw new ApiException(422, 'VALIDATION', 'Le fichier n’est pas un PDF.', [
