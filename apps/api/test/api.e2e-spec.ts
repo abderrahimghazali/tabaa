@@ -3,7 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { Pool } from 'pg';
 import { Logger } from '@nestjs/common';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { InMemoryMailTransport, MailTransport } from '@nestjs/mail';
 
 const { AppModule } = await import('../src/app.module.js');
@@ -50,6 +50,8 @@ let transport: InMemoryMailTransport;
 const tenantIds: string[] = [];
 const PASSWORD = 'correct-horse-battery';
 const uniqueEmail = (tag: string) => `${tag}-${Math.random().toString(36).slice(2, 10)}@example.test`;
+
+const pdfBytes = (tag = 'x') => Buffer.from(`%PDF-1.4\n% ${tag}\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n`);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -771,6 +773,115 @@ describe('row-level security guard', () => {
   });
 });
 
+describe('invoice PDFs', () => {
+  const put = (agent: ReturnType<typeof request>, id: string, body: Buffer | string, token = true, type = 'application/pdf') => {
+    let r = agent.put(`/v1/invoices/${id}/pdf`).set('Content-Type', type);
+    if (token) r = r.set('X-Internal-Token', env.internalToken);
+    return r.send(body);
+  };
+  const issuedIn = async (agent: ReturnType<typeof request>) => {
+    await agent.put('/v1/company').send(company).expect(200);
+    const party = (await agent.post('/v1/parties').send(customerBody).expect(201)).body;
+    const d = (await agent.post('/v1/invoices').send({ customerId: party.id, issueDate: '2026-03-10', lines: [line] }).expect(201)).body;
+    return { draft: d, issued: (await agent.post(`/v1/invoices/${d.id}/issue`).expect(200)).body };
+  };
+
+  it('guards the store: token, state, content type, signature and size', async () => {
+    const owner = request.agent(app.getHttpServer());
+    await signUp(owner as never);
+    const { draft: d, issued } = await issuedIn(owner as never);
+    const second = (await owner.post('/v1/invoices').send({ customerId: d.customerId, issueDate: '2026-03-10', lines: [line] }).expect(201)).body;
+
+    expect((await put(owner as never, issued.id, pdfBytes(), false)).body.code).toBe('FORBIDDEN');
+    await put(owner as never, issued.id, pdfBytes(), false).expect(403);
+    await put(anon, issued.id, pdfBytes()).expect(401);
+    await put(owner as never, second.id, pdfBytes()).expect(409);
+    await put(owner as never, issued.id, Buffer.from('not a pdf at all')).expect(422);
+    await put(owner as never, issued.id, '{"a":1}', true, 'application/json').expect(415);
+    await put(owner as never, issued.id, Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(5 * 1024 * 1024)])).expect(413);
+    await put(owner as never, '00000000-0000-4000-8000-000000000000', pdfBytes()).expect(404);
+    await owner.get(`/v1/invoices/${issued.id}/pdf`).expect(404).expect((r) => expect(r.body.code).toBe('PDF_NOT_GENERATED'));
+    await owner.get(`/v1/invoices/${second.id}/pdf`).expect(409);
+  });
+
+  it('stores once, serves identical bytes with the hash as ETag, and audits it', async () => {
+    const owner = request.agent(app.getHttpServer());
+    const me = (await signUp(owner as never)).body;
+    const { issued } = await issuedIn(owner as never);
+    const bytes = pdfBytes('first');
+    await put(owner as never, issued.id, bytes).expect(204);
+    const sha = createHash('sha256').update(bytes).digest('hex');
+
+    const res = await owner.get(`/v1/invoices/${issued.id}/pdf`).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on('data', (c: Buffer) => chunks.push(c));
+      r.on('end', () => cb(null, Buffer.concat(chunks)));
+    }).expect(200);
+    expect(Buffer.compare(res.body, bytes)).toBe(0);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(res.headers['content-length']).toBe(String(bytes.length));
+    expect(res.headers.etag).toBe(`"${sha}"`);
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.headers['content-disposition']).toBe(`attachment; filename="${issued.number}.pdf"`);
+
+    const again = await put(owner as never, issued.id, pdfBytes('second'));
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe('PDF_ALREADY_STORED');
+    const row = (await admin.query('select sha256, size_bytes, created_by from invoice_pdfs where invoice_id = $1', [issued.id])).rows;
+    expect(row).toEqual([{ sha256: sha, size_bytes: bytes.length, created_by: me.user.id }]);
+    const ev = await events(me.tenant.id, 'invoice.pdf_stored');
+    expect(ev).toHaveLength(1);
+    expect(ev[0].summary).toContain(sha);
+  });
+
+  it('lets exactly one of two concurrent stores win', async () => {
+    const owner = request.agent(app.getHttpServer());
+    await signUp(owner as never);
+    const { issued } = await issuedIn(owner as never);
+    const results = await Promise.all([
+      put(owner as never, issued.id, pdfBytes('a')),
+      put(owner as never, issued.id, pdfBytes('b')),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([204, 409]);
+    expect((await admin.query('select 1 from invoice_pdfs where invoice_id = $1', [issued.id])).rowCount).toBe(1);
+  });
+
+  it('isolates tenants and rejects tampering at the database level', async () => {
+    const owner = request.agent(app.getHttpServer());
+    const me = (await signUp(owner as never)).body;
+    const { issued } = await issuedIn(owner as never);
+    await put(owner as never, issued.id, pdfBytes()).expect(204);
+    await http.get(`/v1/invoices/${issued.id}/pdf`).expect(404);
+
+    const client = await appPool.connect();
+    try {
+      await client.query('begin');
+      await client.query("select set_config('app.tenant_id', $1, true)", [me.tenant.id]);
+      await expect(client.query("update invoice_pdfs set sha256 = 'x'")).rejects.toThrow(/permission denied/);
+      await client.query('rollback');
+      await client.query('begin');
+      await client.query("select set_config('app.tenant_id', $1, true)", [me.tenant.id]);
+      await expect(client.query('delete from invoice_pdfs')).rejects.toThrow(/permission denied/);
+      await client.query('rollback');
+    } finally {
+      client.release();
+    }
+    await expect(admin.query("update invoice_pdfs set sha256 = 'x' where invoice_id = $1", [issued.id])).rejects.toThrow(/immuable/);
+    await expect(admin.query('delete from invoice_pdfs where invoice_id = $1', [issued.id])).rejects.toThrow(/immuable/);
+  });
+
+  it('lets a VIEWER store (with the token) and download', async () => {
+    const owner = request.agent(app.getHttpServer());
+    const me = (await signUp(owner as never)).body;
+    const { issued } = await issuedIn(owner as never);
+    await admin.query("update memberships set role = 'VIEWER' where user_id = $1", [me.user.id]);
+    await put(owner as never, issued.id, pdfBytes(), false).expect(403);
+    await put(owner as never, issued.id, pdfBytes()).expect(204);
+    await owner.get(`/v1/invoices/${issued.id}/pdf`).expect(200);
+    await owner.post('/v1/parties').send(customerBody).expect(403);
+  });
+});
+
 describe('accounts: sign-up and email verification', () => {
   const body = (email: string, extra = {}) => ({ name: 'Nadia', email, password: PASSWORD, companyName: 'Atelier Nadia', ...extra });
   const userCount = async (email: string) =>
@@ -1031,6 +1142,7 @@ describe('accounts: closing a workspace', () => {
     const mk = async (date: string) =>
       (await owner.post('/v1/invoices').send({ customerId: used.id, issueDate: date, lines: [line] }).expect(201)).body;
     const issued = (await owner.post(`/v1/invoices/${(await mk('2026-03-10')).id}/issue`).expect(200)).body;
+    await owner.put(`/v1/invoices/${issued.id}/pdf`).set('Content-Type', 'application/pdf').set('X-Internal-Token', env.internalToken).send(pdfBytes('closure')).expect(204);
     await mk('2026-03-11');
     await anon.post('/v1/auth/sign-in').send({ email: res.body.user.email, password: 'wrong-password-1' }).expect(401);
 
@@ -1063,6 +1175,7 @@ describe('accounts: closing a workspace', () => {
     expect(kept).toHaveLength(1);
     expect(kept[0].number).toBe(issued.number);
     expect(kept[0].r).toBe('2036-12-31');
+    expect(await q('select id from invoice_pdfs where tenant_id = $1')).toHaveLength(1);
     const log = await q('select action, actor_name, actor_user_id, summary from audit_events where tenant_id = $1');
     expect(log.length).toBeGreaterThan(5);
     expect(log.every((e) => e.actor_user_id === null && (e.actor_name === null || e.actor_name === 'Utilisateur supprimé'))).toBe(true);
@@ -1091,7 +1204,7 @@ describe('accounts: closing a workspace', () => {
     expect((await admin.query('select 1 from audit_events where tenant_id = $1', [closed])).rowCount).toBeGreaterThan(0);
 
     expect((await retention.run(new Date('2037-01-02T03:00:00Z'))).tenants).toBeGreaterThanOrEqual(1);
-    for (const table of ['invoices', 'payments', 'audit_events', 'parties', 'companies']) {
+    for (const table of ['invoices', 'invoice_pdfs', 'payments', 'audit_events', 'parties', 'companies']) {
       expect((await admin.query(`select 1 from ${table} where tenant_id = $1`, [closed])).rowCount, table).toBe(0);
     }
     expect((await admin.query('select 1 from tenants where id = $1', [closed])).rowCount).toBe(0);

@@ -7,6 +7,7 @@ import {
   RiDownload2Line,
   RiEditLine,
   RiEyeLine,
+  RiFilePdf2Line,
   RiFileList3Line,
   RiFileReduceLine,
   RiMore2Fill,
@@ -28,6 +29,7 @@ import { toast } from "@/components/base/toast/toast";
 import { NameAvatar } from "@/components/app/name-avatar";
 import { Money } from "@/components/app/money";
 import { createCreditNote, issueInvoice } from "@/lib/actions";
+import { PdfSpinner, usePdfDownload } from "./pdf-download";
 import { daysBetween, fmtDate, sub } from "@/lib/format";
 import { useI18n } from "@/lib/i18n-client";
 import { useCanWrite } from "@/lib/me-client";
@@ -58,6 +60,7 @@ function RowMenu({ inv, onIssue, onCredit }: { inv: Row; onIssue: () => void; on
   const [open, setOpen] = useState(false);
   const draft = inv.state === "DRAFT";
   const canWrite = useCanWrite();
+  const pdf = usePdfDownload(inv.id);
   const go = (href: string) => {
     setOpen(false);
     router.push(href);
@@ -76,7 +79,7 @@ function RowMenu({ inv, onIssue, onCredit }: { inv: Row; onIssue: () => void; on
           open && "border-border-button-active bg-background-primary-active",
         )}
       >
-        <RiMore2Fill className="size-4 shrink-0" aria-hidden />
+        {pdf.busy ? <PdfSpinner className="size-4 shrink-0" /> : <RiMore2Fill className="size-4 shrink-0" aria-hidden />}
       </DropdownTrigger>
       <DropdownPopover aria-label={t("common.actions")} placement="bottom end" variant="compact" className="w-[240px]">
         <DropdownGroup>
@@ -103,6 +106,9 @@ function RowMenu({ inv, onIssue, onCredit }: { inv: Row; onIssue: () => void; on
               <span className={row}><RiFileReduceLine className={icon} aria-hidden />{t("invoice.credit")}</span>
             </DropdownItem>
           )}
+          <DropdownItem onSelect={() => { setOpen(false); void pdf.download(); }}>
+            <span className={row}><RiFilePdf2Line className={icon} aria-hidden />{t("invoice.pdf")}</span>
+          </DropdownItem>
           {!draft && (
             <DropdownItem
               onSelect={() => {

@@ -26,6 +26,7 @@ import { issuesAt } from "@/lib/result";
 import { statusOf } from "@/lib/status";
 import { cx } from "@/utils/cx";
 import { DateField, DecimalField } from "./fields";
+import { pdfIcon, usePdfDownload } from "./pdf-download";
 import { InvoiceSheet, type SheetModel } from "./invoice-sheet";
 import { StatusChip, dueInfo } from "./status";
 
@@ -51,6 +52,7 @@ export function InvoiceDetail({
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [payOpen, setPayOpen] = useState(!!openPayment);
   const [error, setError] = useState<ApiError | null>(null);
+  const pdf = usePdfDownload(invoice.id);
 
   const status = statusOf(invoice);
   const isDraft = invoice.state === "DRAFT";
@@ -148,7 +150,13 @@ export function InvoiceDetail({
       <CrumbLabel>{invoice.number ?? t("invoices.draftTitle")}</CrumbLabel>
       <TopbarActions>
         {isDraft ? (
-          canWrite && <>
+          <>
+            <Button variant="secondary" leadingIcon={pdfIcon(pdf.busy)} onClick={pdf.download} aria-disabled={pdf.busy} className="max-[560px]:hidden">
+              {t("invoice.pdf")}
+            </Button>
+            <Button variant="secondary" iconOnly leadingIcon={pdfIcon(pdf.busy)} onClick={pdf.download} aria-disabled={pdf.busy} aria-label={t("invoice.pdf")} className="min-[561px]:hidden" />
+            {canWrite && (
+              <>
             <ButtonLink variant="secondary" href={`/factures/${invoice.id}/modifier`} leadingIcon={RiEditLine} className="max-[560px]:hidden">
               {t("common.edit")}
             </ButtonLink>
@@ -156,9 +164,15 @@ export function InvoiceDetail({
             <Button onClick={() => setConfirm("issue")} disabled={busy}>
               {t("invoice.issue")}
             </Button>
+              </>
+            )}
           </>
         ) : (
           <>
+            <Button variant="secondary" leadingIcon={pdfIcon(pdf.busy)} onClick={pdf.download} aria-disabled={pdf.busy} className="max-[560px]:hidden">
+              {t("invoice.pdf")}
+            </Button>
+            <Button variant="secondary" iconOnly leadingIcon={pdfIcon(pdf.busy)} onClick={pdf.download} aria-disabled={pdf.busy} aria-label={t("invoice.pdf")} className="min-[561px]:hidden" />
             <ButtonLink variant="secondary" href={`/factures/${invoice.id}/ubl`} download leadingIcon={RiDownload2Line} className="max-[560px]:hidden">
               {t("invoice.ubl")}
             </ButtonLink>

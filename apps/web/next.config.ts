@@ -36,6 +36,7 @@ export default function config(phase: string): NextConfig {
     devIndicators: false,
     partialPrefetching: true,
     poweredByHeader: false,
+    serverExternalPackages: ["playwright-core"],
     async headers() {
       return [{ source: "/:path*", headers: securityHeaders }];
     },

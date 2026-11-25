@@ -17,6 +17,7 @@ export function setup(app: INestApplication) {
     res.setHeader('Cache-Control', 'no-store');
     next();
   });
+  (app as any).useBodyParser('raw', { type: 'application/pdf', limit: '5mb' });
   app.setGlobalPrefix('v1');
   app.enableCors({ origin: env.webUrl, credentials: true });
   app.useGlobalPipes(

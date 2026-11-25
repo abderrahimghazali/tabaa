@@ -24,6 +24,12 @@ function toBody(err: any): [number, Body] {
     const message = MESSAGES[status] ?? (Array.isArray(res?.message) ? res.message.join('; ') : (res?.message ?? err.message));
     return [status, { code: CODES[status] ?? 'ERROR', message }];
   }
+  if (err?.type === 'entity.too.large') {
+    return [413, { code: 'PAYLOAD_TOO_LARGE', message: 'Fichier trop volumineux.' }];
+  }
+  if (err?.type === 'entity.parse.failed') {
+    return [422, { code: 'VALIDATION', message: 'Corps de requête illisible.' }];
+  }
   if (err?.name === 'ZodError') {
     const issues = (err.issues as any[]).map((i) => ({
       path: i.path.join('.'),

@@ -38,3 +38,7 @@ export class RolesGuard implements CanActivate {
 }
 
 export const Roles = (...roles: Role[]) => applyDecorators(SetMetadata(ROLES, roles), UseGuards(RolesGuard));
+
+// For system-side stores of read artefacts (e.g. the invoice PDF): any role may trigger them.
+export const ALLOW_VIEWER = 'allowViewer';
+export const AllowViewer = () => SetMetadata(ALLOW_VIEWER, true);

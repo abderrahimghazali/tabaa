@@ -9,6 +9,11 @@ function sameToken(given: string, expected: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+export function hasInternalToken(req: { headers: Record<string, unknown> }) {
+  const token = req.headers['x-internal-token'];
+  return typeof token === 'string' && sameToken(token, env.internalToken);
+}
+
 // X-Client-IP is only believed from the web server, which proves itself with the shared token.
 export function resolveClientIp(req: { headers: Record<string, unknown>; socket: { remoteAddress?: string } }) {
   const token = req.headers['x-internal-token'];

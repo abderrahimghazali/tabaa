@@ -23,7 +23,7 @@ export async function wipeTenant(tenantId: string) {
     for (const t of ['mfa_authenticators', 'mfa_recovery_codes', 'mfa_failures', 'mfa_challenges']) {
       await tx.execute(sql`delete from ${sql.identifier(t)} where user_id in (${members})`);
     }
-    for (const t of ['payments', 'invoices', 'numbering_sequences', 'items', 'parties', 'companies']) {
+    for (const t of ['invoice_pdfs', 'payments', 'invoices', 'numbering_sequences', 'items', 'parties', 'companies']) {
       await tx.execute(sql`delete from ${sql.identifier(t)} where tenant_id = ${tenantId}`);
     }
     await tx.execute(sql`delete from users where id in (${members})`);

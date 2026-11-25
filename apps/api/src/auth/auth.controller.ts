@@ -71,7 +71,7 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 30, ttl: minutes(15) } })
+  @Throttle({ default: { limit: signInIpLimit(env.nodeEnv), ttl: minutes(15) } })
   @Post('auth/verify-email')
   async verifyEmail(@Body({ schema: VerifyEmailInput }) body: VerifyEmailInput, @Req() req: any): Promise<Me> {
     const me = await this.auth.completeSignUp(body.token);

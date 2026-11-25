@@ -1222,3 +1222,22 @@ html[dir="rtl"] .grow-x-rtl {
     overflow: visible !important;
   }
 }
+
+@page pdf {
+  size: A4;
+  margin: 12mm 12.7mm;
+}
+
+.pdf-root {
+  page: pdf;
+}
+
+@media print {
+  .pdf-root,
+  .pdf-root * {
+    visibility: visible;
+  }
+  .pdf-root thead {
+    display: table-header-group;
+  }
+}

@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { api } from "@/lib/api";
 import { requireCompany } from "@/lib/data";
 import { todayIso } from "@/lib/format";
@@ -11,6 +12,7 @@ import { WriteOnly } from "@/components/app/write-only";
 import { RiAddLine } from "@remixicon/react";
 
 export default async function InvoicesPage({ searchParams }: PageProps<"/factures">) {
+  await connection();
   const { t } = await getT();
   await requireCompany();
   const sp = await searchParams;

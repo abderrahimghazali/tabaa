@@ -1,0 +1,268 @@
+{
+  "type": "diff",
+  "version": "10",
+  "dialect": "postgres",
+  "id": "64f06b3f-4795-48a6-af72-5440581b7307",
+  "prevIds": [
+    "e69c6842-8740-4cb6-b282-8e5603fb374f"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "invoice_pdfs"
+      ],
+      "writes": [
+        "s|tbl|public.invoice_pdfs",
+        "n|tbl|public.invoice_pdfs",
+        "e|tbl|public.invoice_pdfs",
+        "n|rel|public.invoice_pdfs",
+        "n|type|public.invoice_pdfs",
+        "n|rel|public.invoice_pdfs_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "invoice_pdfs",
+        "invoice_pdfs_invoice_uq"
+      ],
+      "writes": [
+        "s|idx|public.invoice_pdfs_invoice_uq",
+        "n|idx|public.invoice_pdfs_invoice_uq",
+        "e|idx|public.invoice_pdfs_invoice_uq",
+        "n|rel|public.invoice_pdfs_invoice_uq"
+      ],
+      "reads": [
+        "n|tbl|public.invoice_pdfs",
+        "n|sch|public",
+        "n|col|public.invoice_pdfs.invoice_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "invoice_pdfs"
+      ],
+      "writes": [
+        "s|fk|public.invoice_pdfs.invoice_pdfs_invoice_id_invoices_id_fkey",
+        "n|fk|public.invoice_pdfs.invoice_pdfs_invoice_id_invoices_id_fkey",
+        "e|fk|public.invoice_pdfs.invoice_pdfs_invoice_id_invoices_id_fkey",
+        "n|con|public.invoice_pdfs.invoice_pdfs_invoice_id_invoices_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.invoice_pdfs",
+        "n|sch|public",
+        "n|tbl|public.invoices",
+        "n|sch|public",
+        "n|col|public.invoice_pdfs.invoice_id",
+        "n|col|public.invoices.id",
+        "e|uniqueness|public.invoices.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "invoice_pdfs",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "tenant_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "invoice_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "content",
+        "type": "bytea",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "sha256",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "size_bytes",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "created_by",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "invoice_pdfs_invoice_uq",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "invoice_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "invoice_pdfs_invoice_id_invoices_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "invoice_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "invoices",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "invoice_pdfs",
+        "name": "invoice_pdfs_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

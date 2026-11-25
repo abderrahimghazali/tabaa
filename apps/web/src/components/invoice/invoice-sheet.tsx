@@ -48,7 +48,7 @@ function Ident({ k, v }: { k: string; v?: string }) {
   );
 }
 
-function Sheet({ m, animate }: { m: SheetModel; animate: boolean }) {
+function Sheet({ m, animate, print = false }: { m: SheetModel; animate: boolean; print?: boolean }) {
   const L = m.language === "ar" ? "ar" : "fr";
   const t = makeT(L);
   const c = m.company;
@@ -65,7 +65,12 @@ function Sheet({ m, animate }: { m: SheetModel; animate: boolean }) {
     <div
       dir={L === "ar" ? "rtl" : "ltr"}
       lang={L}
-      className="relative flex min-h-[1123px] w-[794px] flex-col bg-white px-[48px] pt-[48px] pb-[36px] text-[12px] leading-[18px] text-neutral-950 border border-neutral-200 shadow-lg"
+      data-print-sheet={print ? "" : undefined}
+      className={
+        print
+          ? "relative flex min-h-[270mm] w-full flex-col bg-white text-[12px] leading-[18px] text-neutral-950"
+          : "relative flex min-h-[1123px] w-[794px] flex-col bg-white px-[48px] pt-[48px] pb-[36px] text-[12px] leading-[18px] text-neutral-950 border border-neutral-200 shadow-lg"
+      }
       style={{ fontFamily: L === "ar" ? "var(--font-plex-ar), var(--font-inter)" : "var(--font-inter)" }}
     >
       <div className="flex justify-between gap-8">
@@ -157,7 +162,7 @@ function Sheet({ m, animate }: { m: SheetModel; animate: boolean }) {
             </tr>
           )}
           {lines.map((l, i) => (
-            <tr key={i} className="border-b border-neutral-200 align-top">
+            <tr key={i} className="break-inside-avoid border-b border-neutral-200 align-top">
               <td className="py-2 pe-3">{l.description}</td>
               <td className="num py-2 text-end whitespace-nowrap">
                 {fmtQty(l.quantity)}
@@ -174,7 +179,7 @@ function Sheet({ m, animate }: { m: SheetModel; animate: boolean }) {
         </tbody>
       </table>
 
-      <div className="relative mt-7 grid grid-cols-[1fr_300px] gap-8">
+      <div className={`relative mt-7 grid grid-cols-[1fr_300px] gap-8${print ? " break-inside-avoid pb-[184px]" : ""}`}>
         <div className="space-y-4 text-[11px] leading-[16px]">
           <div>
             <Label>{t("sheet.amountInWords")}</Label>
@@ -245,7 +250,7 @@ function Sheet({ m, animate }: { m: SheetModel; animate: boolean }) {
           </div>
         </div>
 
-        <div className="absolute end-[28px] top-[calc(100%+8px)]">
+        <div className={`absolute end-[28px] ${print ? "bottom-0" : "top-[calc(100%+8px)]"}`}>
           <Cachet
             size={172}
             tone={statusStamp[stamp]}
@@ -260,7 +265,7 @@ function Sheet({ m, animate }: { m: SheetModel; animate: boolean }) {
         </div>
       </div>
 
-      <div className="mt-auto pt-40 text-center text-[10px] leading-[15px] text-neutral-500">
+      <div className={`mt-auto ${print ? "break-inside-avoid pt-4" : "pt-40"} text-center text-[10px] leading-[15px] text-neutral-500`}>
         <div className="border-t border-neutral-200 pt-3">
           {footerName}
           {c?.legalForm ? ` · ${c.legalForm}` : ""}
@@ -296,5 +301,13 @@ export function InvoiceSheet({ model }: { model: SheetModel }) {
     <SheetFrame>
       <Sheet key={pressKey} m={model} animate={pressKey > 0} />
     </SheetFrame>
+  );
+}
+
+export function PrintSheet({ model }: { model: SheetModel }) {
+  return (
+    <div className="pdf-root">
+      <Sheet m={model} animate={false} print />
+    </div>
   );
 }

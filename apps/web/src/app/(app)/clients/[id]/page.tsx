@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { isUuid } from "@/lib/ids";
 import { api, ApiFailure } from "@/lib/api";
@@ -6,6 +7,7 @@ import { todayIso } from "@/lib/format";
 import { CustomerDetail } from "@/components/customer-detail";
 
 export default async function CustomerPage({ params }: PageProps<"/clients/[id]">) {
+  await connection();
   const { id } = await params;
   if (!isUuid(id)) notFound();
   await requireCompany();

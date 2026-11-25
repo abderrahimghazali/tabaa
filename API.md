@@ -69,6 +69,19 @@ Outgoing email goes through SMTP (`SMTP_URL`, `MAIL_FROM`). In development it la
 - Rate-limit counters use Redis when `REDIS_URL` is set (required when `NODE_ENV=production`), otherwise process memory.
 - Demo accounts created by the seed, all with the demo password: `demo@tabaa.ma` (OWNER), `membre@tabaa.ma` (MEMBER), `lecteur@tabaa.ma` (VIEWER).
 
+## Invoice PDF
+
+The web server renders the PDF from the same invoice sheet users see (headless Chromium), then stores the file of an issued invoice through the API so it never changes afterwards.
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| GET | `/invoices/:id/pdf` | | `application/pdf` | The stored file of an issued invoice, with `ETag` set to its SHA-256. 404 `PDF_NOT_GENERATED` when none is stored yet. 409 for drafts |
+| PUT | `/invoices/:id/pdf` | raw `application/pdf`, max 5 MB | 204 | Requires the session AND a valid `X-Internal-Token` (only the web server may store). Issued invoices only (409 for drafts). Must start with `%PDF-`. 409 `PDF_ALREADY_STORED` if one exists: the first stored file wins |
+
+- Stored in table `invoice_pdfs` (invoice id, bytes, SHA-256, size, created at, created by), tenant-isolated, append-only: the database rejects UPDATE and DELETE.
+- The stored PDF shows the invoice as issued (stamp "ÉMISE" or "AVOIR" with the issue date), whatever its later payment status. Drafts are rendered on demand with the "BROUILLON" stamp and never stored.
+- Storing writes the audit event `invoice.pdf_stored`.
+
 ## Security additions
 
 | Method | Path | Body | Returns | Notes |

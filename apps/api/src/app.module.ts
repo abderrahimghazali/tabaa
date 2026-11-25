@@ -7,7 +7,7 @@ import { ApiExceptionFilter } from './common/api-exception.filter.js';
 import { AppThrottlerGuard } from './common/throttler.guard.js';
 import { TenantInterceptor } from './common/tenant.interceptor.js';
 import { accountEmail } from './auth/account-email.js';
-import { cookieSecure, scryptLogN } from './auth/security-policy.js';
+import { cookieSecure, globalLimit, scryptLogN } from './auth/security-policy.js';
 import { AuditModule } from './audit/audit.module.js';
 import { MailModule } from './mail/mail.module.js';
 import { clock } from './common/clock.js';
@@ -31,7 +31,7 @@ import { PartiesModule } from './parties/parties.module.js';
     ThrottlerModule.forRoot({
       ...(env.redisUrl && { storage: new RedisThrottlerStorage(env.redisUrl) }),
       throttlers: [
-        { name: 'default', ttl: minutes(1), limit: 600 },
+        { name: 'default', ttl: minutes(1), limit: globalLimit(env.nodeEnv) },
         {
           name: 'account',
           ttl: minutes(15),

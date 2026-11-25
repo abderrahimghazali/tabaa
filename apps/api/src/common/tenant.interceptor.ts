@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service.js';
 import type { AuthUser } from '../auth/auth-types.js';
 import { TenantDb } from '../db/tenant-db.js';
 import { requestInfo } from './client-ip.js';
+import { ALLOW_VIEWER } from './roles.js';
 import { denyRole } from './roles.js';
 
 const READ_ONLY = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -22,7 +23,8 @@ export class TenantInterceptor implements NestInterceptor {
     const req = ctx.switchToHttp().getRequest();
     const user: AuthUser | undefined = req.user;
     if (!user) return next.handle();
-    if (user.role === 'VIEWER' && !READ_ONLY.has(req.method)) {
+    const viewerOk = this.reflector.get<boolean | undefined>(ALLOW_VIEWER, ctx.getHandler());
+    if (user.role === 'VIEWER' && !viewerOk && !READ_ONLY.has(req.method)) {
       await denyRole(this.audit, req, user, 'lecture seule');
     }
     const meta = this.reflector.get<AuditMeta | undefined>(AUDIT, ctx.getHandler());

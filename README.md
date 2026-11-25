@@ -50,6 +50,7 @@ Tabaa (طابع, « le cachet ») est un logiciel de facturation pensé pour cet
 | **Contrôles avant émission** | ICE du client obligatoire pour une entreprise, cohérence des totaux, taux de TVA autorisés, échéance |
 | **Encaissements** | Paiements partiels, statut payé / partiellement payé / en retard, TVA encaissée du mois |
 | **Tableau de bord** | Créances par ancienneté, facturé et encaissé sur six mois, délai moyen de paiement, échéancier |
+| **PDF** | Téléchargement en PDF, identique à l'écran, texte sélectionnable et arabe compris ; le fichier d'une facture émise est généré une fois, conservé avec son empreinte et ne change plus |
 | **UBL 2.1** | Export XML de chaque facture émise |
 | **Clients et catalogue** | Fiche client avec encours, articles et services avec taux de TVA |
 | **Comptes et espaces** | Inscription avec vérification de l'e-mail, double authentification, réinitialisation du mot de passe ; un espace isolé par entreprise, avec rôles |
@@ -177,6 +178,7 @@ pnpm db:up                      # PostgreSQL, Redis et une boîte e-mail locale
 pnpm --filter @facture/core build
 pnpm --filter api db:migrate
 pnpm --filter api db:seed       # données de démonstration
+pnpm --filter web pdf:install   # navigateur Chromium pour la génération des PDF
 
 pnpm dev                        # interface sur http://localhost:3100, API sur http://localhost:4100
 ```
@@ -224,10 +226,10 @@ gantt
     axisFormat %b %Y
     section Fait
     Factures, avoirs, numérotation, UBL      :done, 2026-11-24, 3d
-    Encaissements et tableau de bord         :done, 2026-11-24, 3d
+    Encaissements, tableau de bord, PDF      :done, 2026-11-24, 3d
     Comptes, double authentification, journal :done, 2026-11-24, 3d
     section Ensuite
-    PDF archivable et envoi au client        :2026-12-01, 3w
+    Envoi de la facture au client par e-mail :2026-12-01, 3w
     Équipe, rôles, accès expert-comptable    :2026-12-15, 3w
     Import bancaire et rapprochement         :2027-01-05, 5w
     TVA, retenue à la source, relevés        :2027-01-26, 6w

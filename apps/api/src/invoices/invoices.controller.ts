@@ -1,12 +1,19 @@
-import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Put, Query, Inject } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Put, Query, Inject, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { InvoiceInput, PaymentInput } from '@facture/core';
 import { Audited } from '../audit/audited.js';
-import { Roles } from '../common/roles.js';
+import { InternalTokenGuard } from '../common/internal-token.guard.js';
+import { AllowViewer, Roles } from '../common/roles.js';
+import { ApiException } from '../common/errors.js';
+import { PdfService } from './pdf.service.js';
 import { InvoicesService } from './invoices.service.js';
 
 @Controller('invoices')
 export class InvoicesController {
-  constructor(@Inject(InvoicesService) private readonly service: InvoicesService) {}
+  constructor(
+    @Inject(InvoicesService) private readonly service: InvoicesService,
+    @Inject(PdfService) private readonly pdfs: PdfService,
+  ) {}
 
   @Get()
   list(
@@ -60,6 +67,29 @@ export class InvoicesController {
   @Header('Content-Type', 'application/xml; charset=utf-8')
   ubl(@Param('id') id: string) {
     return this.service.ubl(id);
+  }
+
+  @Put(':id/pdf')
+  @UseGuards(InternalTokenGuard)
+  @AllowViewer()
+  @HttpCode(204)
+  async storePdf(@Param('id') id: string, @Req() req: any) {
+    if (!Buffer.isBuffer(req.body) || !String(req.headers['content-type']).startsWith('application/pdf')) {
+      throw new ApiException(415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type application/pdf requis.');
+    }
+    await this.pdfs.store(id, req.body);
+  }
+
+  @Get(':id/pdf')
+  async readPdf(@Param('id') id: string, @Res({ passthrough: true }) res: Response) {
+    const pdf = await this.pdfs.read(id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      ETag: `"${pdf.sha256}"`,
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `attachment; filename="${pdf.number}.pdf"`,
+    });
+    return new StreamableFile(pdf.content);
   }
 
   @Post(':id/payments')
