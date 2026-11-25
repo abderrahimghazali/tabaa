@@ -51,7 +51,8 @@ const tenantIds: string[] = [];
 const PASSWORD = 'correct-horse-battery';
 const uniqueEmail = (tag: string) => `${tag}-${Math.random().toString(36).slice(2, 10)}@example.test`;
 
-const pdfBytes = (tag = 'x') => Buffer.from(`%PDF-1.4\n% ${tag}\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n`);
+const pdfBytes = (tag = 'x') =>
+  Buffer.from(`%PDF-1.4\n% ${tag}\n1 0 obj << /Type /Catalog >> endobj\n2 0 obj << /Type /Page >> endobj\n% ${'pad '.repeat(300)}\n%%EOF\n`);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -797,6 +798,8 @@ describe('invoice PDFs', () => {
     await put(anon, issued.id, pdfBytes()).expect(401);
     await put(owner as never, second.id, pdfBytes()).expect(409);
     await put(owner as never, issued.id, Buffer.from('not a pdf at all')).expect(422);
+    // A header and trailer with nothing in between is not a document: it must not become the permanent file.
+    await put(owner as never, issued.id, Buffer.from('%PDF-1.4\n%%EOF\n')).expect(422);
     await put(owner as never, issued.id, '{"a":1}', true, 'application/json').expect(415);
     await put(owner as never, issued.id, Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(5 * 1024 * 1024)])).expect(413);
     await put(owner as never, '00000000-0000-4000-8000-000000000000', pdfBytes()).expect(404);

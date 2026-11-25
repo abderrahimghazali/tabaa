@@ -24,9 +24,16 @@ export class PdfService {
     // The controller checks this too; repeated here so the size and hash below never run on anything but bytes.
     if (!Buffer.isBuffer(content)) throw new ApiException(415, 'UNSUPPORTED_MEDIA_TYPE', 'Content-Type application/pdf requis.');
     await this.issued(id);
-    if (content.subarray(0, 5).toString('latin1') !== '%PDF-') {
-      throw new ApiException(422, 'VALIDATION', 'Le fichier n’est pas un PDF.', [
-        { path: 'body', rule: 'schema', message: 'Le contenu doit commencer par %PDF-.' },
+    // A stored file is permanent, so an empty or truncated one must never get in.
+    const tail = content.subarray(Math.max(0, content.byteLength - 1024)).toString('latin1');
+    const complete =
+      content.byteLength >= 1024 &&
+      content.subarray(0, 5).toString('latin1') === '%PDF-' &&
+      tail.includes('%%EOF') &&
+      /\/Type\s*\/Page\b/.test(content.toString('latin1'));
+    if (!complete) {
+      throw new ApiException(422, 'VALIDATION', 'Le fichier n’est pas un PDF complet.', [
+        { path: 'body', rule: 'schema', message: 'Le contenu doit être un PDF complet contenant au moins une page.' },
       ]);
     }
     const sha256 = createHash('sha256').update(content).digest('hex');
