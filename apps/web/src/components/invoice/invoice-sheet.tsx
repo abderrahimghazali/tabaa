@@ -6,6 +6,7 @@ import { Cachet } from "@/components/ui/cachet";
 import { currencyLabel, fmtDate, fmtNumber, groupDigits, ICE_GROUPS, RIB_GROUPS } from "@/lib/format";
 import { makeT } from "@/lib/i18n";
 import { statusStamp, type StatusKey } from "@/lib/status";
+import { cx } from "@/utils/cx";
 import { SheetFrame } from "./sheet-frame";
 
 export type SheetModel = {
@@ -38,12 +39,130 @@ function Label({ children }: { children: React.ReactNode }) {
   return <div className="text-[9.5px] font-semibold tracking-wider text-neutral-500 uppercase">{children}</div>;
 }
 
-function Ident({ k, v }: { k: string; v?: string }) {
-  if (!v) return null;
+export type Zone = "name" | "legalForm" | "capital" | "address" | "contact" | "ice" | "if" | "rc" | "tp" | "cnss" | "bank" | "rib";
+/** Settings preview only: which zone is highlighted, and whether empty required values show a dashed placeholder. */
+export type Mark = { zone: Zone | null; blanks: boolean };
+type T = ReturnType<typeof makeT>;
+
+function Z({ mark, zone, req, empty, w = 80, children }: { mark?: Mark; zone: Zone; req?: boolean; empty?: boolean; w?: number; children?: React.ReactNode }) {
+  if (!mark) return <>{children}</>;
+  const on = mark.zone === zone;
+  return (
+    <span
+      data-zone={zone}
+      className={cx("-mx-[3px] box-decoration-clone px-[3px] rounded-[3px] transition-colors duration-150", on && "bg-accent-100 shadow-[0_0_0_2px_var(--color-accent-100)]")}
+    >
+      {empty && req && mark.blanks ? (
+        <span className="inline-block h-[10px] rounded-[3px] border border-dashed border-neutral-300 align-middle" style={{ width: w }} />
+      ) : (
+        children
+      )}
+    </span>
+  );
+}
+
+function Ident({ k, v, mark, zone, req }: { k: string; v?: string; mark?: Mark; zone?: Zone; req?: boolean }) {
+  if (!v && !(mark && req && mark.blanks)) return null;
   return (
     <div className="flex gap-1.5">
       <span className="w-[34px] shrink-0 text-neutral-500">{k}</span>
-      <span className="ident">{v}</span>
+      <span className="ident">
+        {zone ? (
+          <Z mark={mark} zone={zone} req={req} empty={!v} w={96}>
+            {v}
+          </Z>
+        ) : (
+          v
+        )}
+      </span>
+    </div>
+  );
+}
+
+export function SellerBlock({ c, mark }: { c: Company | null; mark?: Mark }) {
+  const addr = c?.address;
+  return (
+    <div className="min-w-0">
+      <div className="paper-display text-[20px] leading-[24px]">
+        <Z mark={mark} zone="name" req empty={!c?.name} w={150}>
+          {c?.name ?? "—"}
+        </Z>
+      </div>
+      {(c?.legalForm || mark) && (
+        <div className="text-neutral-500">
+          <Z mark={mark} zone="legalForm">
+            {c?.legalForm}
+          </Z>
+          {mark && !c?.legalForm ? <span className="inline-block h-[1em] w-px" /> : null}
+        </div>
+      )}
+      {c && (
+        <div className="mt-1 text-neutral-500">
+          <Z mark={mark} zone="address" req empty={!addr?.line1 && !addr?.city} w={140}>
+            {addr?.line1}
+            {addr?.line2 ? `, ${addr.line2}` : ""}
+            <br />
+            {addr?.postalCode} {addr?.city}
+          </Z>
+        </div>
+      )}
+      <div className="mt-3 space-y-px text-[11px] leading-[16px]">
+        <Ident k="ICE" v={c?.ice ? groupDigits(c.ice, ICE_GROUPS) : undefined} mark={mark} zone="ice" req />
+        <Ident k="IF" v={c?.ifNumber} mark={mark} zone="if" req />
+        <Ident k="RC" v={c?.rcNumber ? `${c.rcNumber}${c.rcCourt ? ` · ${c.rcCourt}` : ""}` : undefined} mark={mark} zone="rc" />
+        <Ident k="TP" v={c?.tpNumber} mark={mark} zone="tp" />
+        <Ident k="CNSS" v={c?.cnssNumber} mark={mark} zone="cnss" />
+      </div>
+    </div>
+  );
+}
+
+export function PaymentBlock({ c, t, first, mark }: { c: Company | null; t: T; first: React.ReactNode; mark?: Mark }) {
+  return (
+    <div>
+      <Label>{t("sheet.payment")}</Label>
+      <div className="mt-1 space-y-px">
+        <div>{first}</div>
+        {(c?.bankName || mark) && (
+          <div className="text-neutral-500">
+            <Z mark={mark} zone="bank">
+              {c?.bankName}
+            </Z>
+            {mark && !c?.bankName ? <span className="inline-block h-[1em] w-px" /> : null}
+          </div>
+        )}
+        {(c?.rib || mark) && (
+          <div>
+            RIB{" "}
+            <span className="ident">
+              <Z mark={mark} zone="rib">
+                {c?.rib ? groupDigits(c.rib, RIB_GROUPS) : null}
+              </Z>
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function SheetFooter({ c, currency, t, mark, className }: { c: Company | null; currency: string; t: T; mark?: Mark; className?: string }) {
+  const bits: React.ReactNode[] = [];
+  const add = (node: React.ReactNode) => bits.push(node);
+  if (!c || c.name) add(<Z key="n" mark={mark} zone="name">{c ? c.name : "Tabaa"}</Z>);
+  if (c?.legalForm) add(<Z key="f" mark={mark} zone="legalForm">{c.legalForm}</Z>);
+  if (c?.capital) add(<Z key="c" mark={mark} zone="capital">{`${t("sheet.capital")} ${fmtNumber(c.capital)} ${currency === "MAD" ? "DH" : currency}`}</Z>);
+  if (c && (c.address.line1 || c.address.city)) add(<Z key="a" mark={mark} zone="address">{[c.address.line1, c.address.city].filter(Boolean).join(", ")}</Z>);
+  if (c?.phone) add(<Z key="p" mark={mark} zone="contact">{c.phone}</Z>);
+  if (c?.email) add(<Z key="e" mark={mark} zone="contact">{c.email}</Z>);
+  return (
+    <div className={className}>
+      {bits.map((b, i) => (
+        <span key={i}>
+          {i > 0 ? " · " : ""}
+          {b}
+        </span>
+      ))}
     </div>
   );
 }
@@ -57,7 +176,6 @@ function Sheet({ m, animate, print = false }: { m: SheetModel; animate: boolean;
   const stamp = m.status;
   const showFr = m.language !== "ar";
   const showAr = m.language !== "fr";
-  const footerName = c ? `${c.name}` : "Tabaa";
   const lines = m.totals.lines;
   const hasVatLines = m.totals.breakdown.length > 0;
 
@@ -74,25 +192,7 @@ function Sheet({ m, animate, print = false }: { m: SheetModel; animate: boolean;
       style={{ fontFamily: L === "ar" ? "var(--font-plex-ar), var(--font-inter)" : "var(--font-inter)" }}
     >
       <div className="flex justify-between gap-8">
-        <div className="min-w-0">
-          <div className="paper-display text-[20px] leading-[24px]">{c?.name ?? "—"}</div>
-          {c?.legalForm && <div className="text-neutral-500">{c.legalForm}</div>}
-          {c && (
-            <div className="mt-1 text-neutral-500">
-              {c.address.line1}
-              {c.address.line2 ? `, ${c.address.line2}` : ""}
-              <br />
-              {c.address.postalCode} {c.address.city}
-            </div>
-          )}
-          <div className="mt-3 space-y-px text-[11px] leading-[16px]">
-            <Ident k="ICE" v={c?.ice ? groupDigits(c.ice, ICE_GROUPS) : undefined} />
-            <Ident k="IF" v={c?.ifNumber} />
-            <Ident k="RC" v={c?.rcNumber ? `${c.rcNumber}${c.rcCourt ? ` · ${c.rcCourt}` : ""}` : undefined} />
-            <Ident k="TP" v={c?.tpNumber} />
-            <Ident k="CNSS" v={c?.cnssNumber} />
-          </div>
-        </div>
+        <SellerBlock c={c} />
         <div className="shrink-0 text-end">
           <div className="paper-display text-[28px] leading-[32px] uppercase">{title}</div>
           <div className="mt-1 text-[14px] font-medium">
@@ -192,20 +292,15 @@ function Sheet({ m, animate, print = false }: { m: SheetModel; animate: boolean;
               )}
             </div>
           </div>
-          <div>
-            <Label>{t("sheet.payment")}</Label>
-            <div className="mt-1 space-y-px">
-              <div>
+          <PaymentBlock
+            c={c}
+            t={t}
+            first={
+              <>
                 {t(`pm.${m.paymentMethod}`)} · {t("sheet.dueBy")} <span className="num">{fmtDate(m.dueDate)}</span>
-              </div>
-              {c?.bankName && <div className="text-neutral-500">{c.bankName}</div>}
-              {c?.rib && (
-                <div>
-                  RIB <span className="ident">{groupDigits(c.rib, RIB_GROUPS)}</span>
-                </div>
-              )}
-            </div>
-          </div>
+              </>
+            }
+          />
           {m.notes && (
             <div>
               <Label>{t("sheet.notes")}</Label>
@@ -266,14 +361,7 @@ function Sheet({ m, animate, print = false }: { m: SheetModel; animate: boolean;
       </div>
 
       <div className={`mt-auto ${print ? "break-inside-avoid pt-4" : "pt-40"} text-center text-[10px] leading-[15px] text-neutral-500`}>
-        <div className="border-t border-neutral-200 pt-3">
-          {footerName}
-          {c?.legalForm ? ` · ${c.legalForm}` : ""}
-          {c?.capital ? ` · ${t("sheet.capital")} ${fmtNumber(c.capital)} ${m.currency === "MAD" ? "DH" : m.currency}` : ""}
-          {c ? ` · ${c.address.line1}, ${c.address.city}` : ""}
-          {c?.phone ? ` · ${c.phone}` : ""}
-          {c?.email ? ` · ${c.email}` : ""}
-        </div>
+        <SheetFooter c={c} currency={m.currency} t={t} className="border-t border-neutral-200 pt-3" />
       </div>
     </div>
   );
