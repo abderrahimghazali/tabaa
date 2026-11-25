@@ -37,7 +37,7 @@ export class PdfService {
         invoiceId: id,
         content,
         sha256,
-        sizeBytes: content.length,
+        sizeBytes: content.byteLength,
         createdBy: this.t.ctx.userId ?? null,
       })
       .onConflictDoNothing({ target: invoicePdfs.invoiceId })
