@@ -15,6 +15,12 @@
 </p>
 
 <p align="center">
+  Outils gratuits :
+  <a href="https://abderrahimghazali.github.io/outils/verificateur-ice/">vérificateur d'ICE</a> ·
+  <a href="https://abderrahimghazali.github.io/outils/generateur-ubl/">générateur de facture UBL 2.1</a>
+</p>
+
+<p align="center">
   <a href="#fonctionnalités">Fonctionnalités</a> ·
   <a href="#conformité-marocaine">Conformité</a> ·
   <a href="#architecture">Architecture</a> ·
