@@ -17,16 +17,19 @@ export async function wipeTenant(tenantId: string) {
   await db.transaction(async (tx) => {
     await tx.execute(sql`set local session_replication_role = replica`);
     await tx.execute(sql`delete from audit_events where tenant_id = ${tenantId}`);
-    const members = sql`select user_id from memberships where tenant_id = ${tenantId}`;
-    await tx.execute(sql`delete from sessions where tenant_id = ${tenantId} or user_id in (${members})`);
-    await tx.execute(sql`delete from email_tokens where user_id in (${members})`);
+    // Users who also belong to another workspace keep their account; only this membership goes.
+    const gone = sql`select m.user_id from memberships m where m.tenant_id = ${tenantId}
+      and not exists (select 1 from memberships o where o.user_id = m.user_id and o.tenant_id <> ${tenantId})`;
+    await tx.execute(sql`delete from sessions where tenant_id = ${tenantId} or user_id in (${gone})`);
+    await tx.execute(sql`delete from email_tokens where user_id in (${gone})`);
     for (const t of ['mfa_authenticators', 'mfa_recovery_codes', 'mfa_failures', 'mfa_challenges']) {
-      await tx.execute(sql`delete from ${sql.identifier(t)} where user_id in (${members})`);
+      await tx.execute(sql`delete from ${sql.identifier(t)} where user_id in (${gone})`);
     }
-    for (const t of ['invoice_pdfs', 'payments', 'invoices', 'numbering_sequences', 'items', 'parties', 'companies']) {
+    await tx.execute(sql`delete from mfa_challenges where tenant_id = ${tenantId}`);
+    for (const t of ['invoice_deliveries', 'invoice_pdfs', 'payments', 'invoices', 'numbering_sequences', 'items', 'parties', 'companies', 'invitations']) {
       await tx.execute(sql`delete from ${sql.identifier(t)} where tenant_id = ${tenantId}`);
     }
-    await tx.execute(sql`delete from users where id in (${members})`);
+    await tx.execute(sql`delete from users where id in (${gone})`);
     await tx.execute(sql`delete from memberships where tenant_id = ${tenantId}`);
     await tx.execute(sql`delete from tenants where id = ${tenantId}`);
   });

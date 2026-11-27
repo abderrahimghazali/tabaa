@@ -2,8 +2,10 @@ export const SESSION_COOKIE = "tabaa_session";
 export const MFA_COOKIE = "tabaa_mfa";
 
 const AUTH_PATHS = ["/connexion", "/inscription", "/mot-de-passe-oublie", "/reinitialiser", "/verification"];
-// Reachable signed in or out.
-export const isPublicPath = (pathname: string) => pathname.startsWith("/session-expiree") || pathname.startsWith("/espace-ferme");
+// Never a sign-in destination: they end or reset a session.
+const isTerminalPath = (pathname: string) => pathname.startsWith("/session-expiree") || pathname.startsWith("/espace-ferme");
+// Reachable signed in or out. The invitation page is a valid `next`: signing in sends the person back to it.
+export const isPublicPath = (pathname: string) => isTerminalPath(pathname) || pathname === "/invitation" || pathname === "/invitation/";
 export const isAuthPath = (pathname: string) => AUTH_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
 const ORIGIN = "http://tabaa.invalid";
@@ -30,6 +32,6 @@ export function safeNext(next: string | null | undefined): string {
     return "/";
   }
   if (url.origin !== ORIGIN || url.pathname.startsWith("//")) return "/";
-  if (isAuthPath(url.pathname) || isPublicPath(url.pathname)) return "/";
+  if (isAuthPath(url.pathname) || isTerminalPath(url.pathname)) return "/";
   return url.pathname + url.search;
 }

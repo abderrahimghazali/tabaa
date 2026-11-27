@@ -438,7 +438,7 @@ describe('row-level security', () => {
   });
 });
 
-const asRole = async (role: 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER') => {
+const asRole = async (role: 'OWNER' | 'ADMIN' | 'MEMBER' | 'ACCOUNTANT' | 'VIEWER') => {
   const agent = request.agent(app.getHttpServer());
   const res = await signUp(agent as never);
   await admin.query('update memberships set role = $1 where user_id = $2', [role, res.body.user.id]);
@@ -1111,7 +1111,7 @@ describe('accounts: seeded team and closure', () => {
       stdio: 'pipe',
       timeout: 110_000,
     });
-    tenantIds.push(SEED_TENANT);
+    tenantIds.push(SEED_TENANT, `${SEED_TENANT.slice(0, -4)}f002`);
     const login = async (email: string) => {
       const agent = request.agent(app.getHttpServer());
       const res = await agent.post('/v1/auth/sign-in').send({ email, password: 'tabaa-demo-2026' }).expect(200);
@@ -1130,6 +1130,21 @@ describe('accounts: seeded team and closure', () => {
     await viewer.agent.get('/v1/invoices').expect(200);
     await viewer.agent.post('/v1/parties').send(customerBody).expect(403);
     await owner.agent.post('/v1/tenant/close').send({ password: 'wrong-password-1', confirmName: owner.me.tenant.name }).expect(401);
+
+    const accountant = await login('comptable@tabaa.ma');
+    expect(accountant.me.role).toBe('ACCOUNTANT');
+    expect(accountant.me.user.name).toBe('Karim Tazi');
+    expect(accountant.me.memberships.map((m: { tenantName: string; role: string }) => [m.tenantName, m.role]).sort()).toEqual([
+      ['Atelier Zellige Fès SARL', 'ACCOUNTANT'],
+      ['Maghreb Digital Services', 'ACCOUNTANT'],
+    ]);
+    expect(owner.me.memberships.map((m: { role: string }) => m.role)).toEqual(['OWNER', 'OWNER']);
+    await accountant.agent.get('/v1/export').expect(200);
+    await accountant.agent.post('/v1/parties').send(customerBody).expect(403);
+    const fes = owner.me.memberships.find((m: { tenantName: string }) => m.tenantName.startsWith('Atelier')).tenantId;
+    await owner.agent.post('/v1/auth/switch-tenant').send({ tenantId: fes }).expect(200);
+    expect((await owner.agent.get('/v1/parties').expect(200)).body).toHaveLength(3);
+    expect((await owner.agent.get('/v1/invoices').expect(200)).body).toHaveLength(5);
   }, 120_000);
 });
 
@@ -1211,5 +1226,489 @@ describe('accounts: closing a workspace', () => {
       expect((await admin.query(`select 1 from ${table} where tenant_id = $1`, [closed])).rowCount, table).toBe(0);
     }
     expect((await admin.query('select 1 from tenants where id = $1', [closed])).rowCount).toBe(0);
+  });
+});
+
+const ownerWithCompany = async (companyOverrides: Record<string, unknown> = {}) => {
+  const agent = request.agent(app.getHttpServer());
+  const me = (await signUp(agent as never)).body;
+  // Account throttling keys on any body.email, so each company gets its own address.
+  const email = uniqueEmail('compta');
+  await agent.put('/v1/company').send({ ...company, email, bankName: 'Attijariwafa bank', ...companyOverrides }).expect(200);
+  return { agent, me, companyEmail: email };
+};
+
+describe('sending invoices by email', () => {
+  const put = (agent: ReturnType<typeof request>, id: string) =>
+    agent.put(`/v1/invoices/${id}/pdf`).set('Content-Type', 'application/pdf').set('X-Internal-Token', env.internalToken).send(pdfBytes(id));
+
+  const setup = async (opts: { pdf?: boolean; language?: string } = {}) => {
+    const o = await ownerWithCompany({ invoiceLanguage: opts.language ?? 'fr' });
+    const party = (await o.agent.post('/v1/parties').send({ ...customerBody, email: 'Client@Example.test' }).expect(201)).body;
+    const d = (await o.agent.post('/v1/invoices').send({ customerId: party.id, issueDate: '2026-03-10', lines: [line], dueDate: '2026-04-10' }).expect(201)).body;
+    const issued = (await o.agent.post(`/v1/invoices/${d.id}/issue`).expect(200)).body;
+    if (opts.pdf !== false) await put(o.agent as never, issued.id).expect(204);
+    return { ...o, party, draft: d, issued };
+  };
+  const payload = (over: Record<string, unknown> = {}) => ({ kind: 'INVOICE', to: ['client@example.test'], subject: 'Votre facture', message: 'Bonjour, voici la facture.', attachUbl: false, ...over });
+
+  it('prefills the dialog in the invoice language', async () => {
+    const s = await setup();
+    const p = (await s.agent.get(`/v1/invoices/${s.issued.id}/send-preview`).expect(200)).body;
+    expect(p.to).toEqual(['client@example.test']);
+    expect(p.subject).toContain(s.issued.number);
+    for (const part of [s.issued.number, '2 400,00 MAD', '10/04/2026', 'virement bancaire', '007 780 0001234000456789 12', 'Attijariwafa bank']) expect(p.message).toContain(part);
+    expect(p.message).not.toMatch(/[؀-ۿ]/);
+
+    const reminder = (await s.agent.get(`/v1/invoices/${s.issued.id}/send-preview?kind=REMINDER`).expect(200)).body;
+    expect(reminder.subject).toMatch(/Rappel/);
+    expect(reminder.message).toMatch(/2 400,00 MAD/);
+    expect(reminder.message).toMatch(/\d+ jours? de retard/);
+
+    const bilingual = await setup({ language: 'fr-ar' });
+    const b = (await bilingual.agent.get(`/v1/invoices/${bilingual.issued.id}/send-preview`).expect(200)).body;
+    expect(b.message).toMatch(/Bonjour/);
+    expect(b.message).toMatch(/[؀-ۿ]/);
+    await s.agent.get(`/v1/invoices/${s.issued.id}/send-preview?kind=NOPE`).expect(422);
+  });
+
+  it('sends with the PDF, optional UBL and Reply-To, and records it', async () => {
+    const s = await setup();
+    transport.clear();
+    const res = await s.agent
+      .post(`/v1/invoices/${s.issued.id}/send`)
+      .send(payload({ to: ['Client@Example.test', 'client@example.test'], cc: ['compta@example.test', 'client@example.test'], attachUbl: true }))
+      .expect(200);
+    expect(res.body.deliveries).toHaveLength(1);
+    expect(res.body.deliveries[0]).toMatchObject({ kind: 'INVOICE', to: ['client@example.test'], cc: ['compta@example.test'], subject: 'Votre facture', sentByName: 'Test User' });
+    const mail = transport.mails.at(-1)!;
+    expect(mail.to.map((a) => a.address)).toEqual(['client@example.test']);
+    expect(mail.cc.map((a) => a.address)).toEqual(['compta@example.test']);
+    expect(mail.from.address).toBe('no-reply@tabaa.local');
+    expect(mail.from.name).toBe('Test Société SARL via Tabaa');
+    expect(mail.raw).toMatch(new RegExp(`Reply-To:.*${s.companyEmail.replace('.', '\\.')}`, 'i'));
+    const pdf = mail.attachment(`${s.issued.number}.pdf`);
+    expect(pdf.contentType).toBe('application/pdf');
+    expect(Buffer.from(pdf.content).subarray(0, 5).toString()).toBe('%PDF-');
+    const xml = mail.attachment(`${s.issued.number}.xml`);
+    expect(xml.contentType).toContain('xml');
+    expect(Buffer.from(xml.content).toString()).toContain('<Invoice');
+    expect(mail.html).not.toMatch(/<img|https?:\/\//);
+
+    const again = (await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload({ kind: 'REMINDER', subject: 'Rappel' })).expect(200)).body;
+    expect(again.deliveries.map((d: { kind: string }) => d.kind)).toEqual(['REMINDER', 'INVOICE']);
+    expect(transport.mails.at(-1)!.attachments.map((a) => a.filename)).toEqual([`${s.issued.number}.pdf`]);
+    const list = (await s.agent.get('/v1/invoices').expect(200)).body;
+    expect(list[0].lastSentAt).toBe(again.deliveries[0].sentAt);
+    const audit = await events(s.me.tenant.id, 'invoice.sent');
+    expect(audit).toHaveLength(1);
+    expect(audit[0].summary).toBe('2 destinataires');
+    expect(audit[0].summary).not.toContain('Bonjour');
+    expect((await events(s.me.tenant.id, 'invoice.reminder_sent')).length).toBe(1);
+    expect((await s.agent.get(`/v1/invoices/${s.draft.id}`).expect(200)).body.deliveries).toHaveLength(2);
+    await expect(admin.query('delete from invoice_deliveries')).rejects.toThrow(/immuable/);
+    await expect(appPool.query('update invoice_deliveries set subject = $1', ['x'])).rejects.toThrow();
+  });
+
+  it('refuses drafts, missing PDFs and pointless reminders', async () => {
+    const s = await setup({ pdf: false });
+    const d2 = (await s.agent.post('/v1/invoices').send({ customerId: s.party.id, issueDate: '2026-03-10', lines: [line] }).expect(201)).body;
+    expect((await s.agent.post(`/v1/invoices/${d2.id}/send`).send(payload()).expect(409)).body.code).toBe('CONFLICT');
+    await s.agent.get(`/v1/invoices/${d2.id}/send-preview`).expect(409);
+    const noPdf = await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload()).expect(409);
+    expect(noPdf.body.code).toBe('PDF_NOT_GENERATED');
+    await put(s.agent as never, s.issued.id).expect(204);
+    await s.agent.post(`/v1/invoices/${s.issued.id}/payments`).send({ paidOn: '2026-03-20', method: 'TRANSFER', amount: s.issued.totals.amountDue }).expect(201);
+    await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload({ kind: 'REMINDER' })).expect(409);
+    await s.agent.get(`/v1/invoices/${s.issued.id}/send-preview?kind=REMINDER`).expect(409);
+    await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload()).expect(200);
+  });
+
+  it('rejects header injection, and the caller cannot set From', async () => {
+    const s = await setup();
+    transport.clear();
+    const bad = await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload({ subject: 'Facture\r\nBcc: evil@example.test' }));
+    expect(bad.status).toBe(422);
+    expect(bad.body.issues[0].path).toBe('subject');
+    await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload({ to: ['a@example.test\r\nBcc: evil@example.test'] })).expect(422);
+    const withFrom = await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send({ ...payload(), from: 'evil@example.test', headers: { Bcc: 'evil@example.test' } });
+    expect(withFrom.status).toBe(200);
+    expect(transport.mails.at(-1)!.from.address).toBe('no-reply@tabaa.local');
+    expect(transport.mails.at(-1)!.raw).not.toMatch(/evil@example\.test/);
+    const odd = await ownerWithCompany({ name: 'Evil" <x@y.z>\r\nBcc: z@y.z' });
+    const party = (await odd.agent.post('/v1/parties').send(customerBody).expect(201)).body;
+    const inv = (await odd.agent.post('/v1/invoices').send({ customerId: party.id, issueDate: '2026-03-10', lines: [line] }).expect(201)).body;
+    const issued = (await odd.agent.post(`/v1/invoices/${inv.id}/issue`).expect(200)).body;
+    await put(odd.agent as never, issued.id).expect(204);
+    await odd.agent.post(`/v1/invoices/${issued.id}/send`).send(payload()).expect(200);
+    expect(transport.mails.at(-1)!.raw).not.toMatch(/^Bcc:/im);
+  });
+
+  it('answers 502 and records nothing when the mail server refuses', async () => {
+    const s = await setup();
+    transport.failNext(new Error('smtp down'));
+    transport.failNext(new Error('smtp down'));
+    const res = await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload()).expect(502);
+    expect(res.body.code).toBe('MAIL_FAILED');
+    expect((await admin.query('select 1 from invoice_deliveries where invoice_id = $1', [s.issued.id])).rowCount).toBe(0);
+    expect(await events(s.me.tenant.id, 'invoice.sent')).toHaveLength(0);
+    transport.clear();
+    await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload()).expect(200);
+  });
+
+  it('limits sends per workspace per hour and per day', async () => {
+    const s = await setup();
+    const fill = (n: number, ago: string) =>
+      admin.query(
+        `insert into invoice_deliveries (tenant_id, invoice_id, kind, "to", cc, subject, message, attach_ubl, sent_at)
+         select $1, $2, 'INVOICE', array['x@example.test'], array[]::text[], 's', 'm', false, now() - $3::interval from generate_series(1, $4)`,
+        [s.me.tenant.id, s.issued.id, ago, n],
+      );
+    await fill(19, '10 minutes');
+    await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload()).expect(200);
+    const limited = await s.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload()).expect(429);
+    expect(limited.body.code).toBe('SEND_LIMIT');
+
+    const d = await setup();
+    await admin.query(
+      `insert into invoice_deliveries (tenant_id, invoice_id, kind, "to", cc, subject, message, attach_ubl, sent_at)
+       select $1, $2, 'INVOICE', array['x@example.test'], array[]::text[], 's', 'm', false, now() - interval '3 hours' - (g || ' minutes')::interval from generate_series(1, 200) g`,
+      [d.me.tenant.id, d.issued.id],
+    );
+    expect((await d.agent.post(`/v1/invoices/${d.issued.id}/send`).send(payload()).expect(429)).body.code).toBe('SEND_LIMIT');
+  });
+
+  it('is closed to VIEWER and ACCOUNTANT and to other workspaces', async () => {
+    const s = await setup();
+    for (const role of ['VIEWER', 'ACCOUNTANT']) {
+      const r = await asRole(role as 'VIEWER');
+      await admin.query('update memberships set tenant_id = $1 where user_id = $2', [s.me.tenant.id, r.me.user.id]);
+      await admin.query('update sessions set tenant_id = $1 where user_id = $2', [s.me.tenant.id, r.me.user.id]);
+      expect((await r.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload())).status).toBe(403);
+      expect((await r.agent.get(`/v1/invoices/${s.issued.id}/send-preview`)).status).toBe(403);
+      await r.agent.get(`/v1/invoices/${s.issued.id}`).expect(200);
+    }
+    const other = await ownerWithCompany();
+    await other.agent.post(`/v1/invoices/${s.issued.id}/send`).send(payload()).expect(404);
+    await other.agent.get(`/v1/invoices/${s.issued.id}/send-preview`).expect(404);
+  });
+});
+
+// A workspace with an OWNER and people added through the real invitation flow.
+const invite = async (agent: ReturnType<typeof request>, email: string, role: string) => {
+  const res = await agent.post('/v1/team/invitations').send({ email, role });
+  if (res.status !== 201) return { res, token: '' };
+  const mail = await waitMail(email, 'Invitation');
+  return { res, token: tokenOf(mail) };
+};
+const join = async (owner: ReturnType<typeof request>, role: string) => {
+  const email = uniqueEmail(role.toLowerCase());
+  const { token } = await invite(owner, email, role);
+  const agent = request.agent(app.getHttpServer());
+  const res = await agent.post('/v1/auth/invitations/accept').send({ token, name: `Nom ${role}`, password: PASSWORD }).expect(200);
+  return { agent, me: res.body, email };
+};
+const workspaceWith = async () => {
+  const o = await ownerWithCompany();
+  return { ...o, join: (role: string) => join(o.agent as never, role) };
+};
+
+describe('team: permissions by role', () => {
+  it('applies the permission table to all five roles', async () => {
+    const none = '00000000-0000-4000-8000-000000000000';
+    const matrix: [string, (a: ReturnType<typeof request>) => Promise<{ status: number }>, string[]][] = [
+      ['read', (a) => a.get('/v1/invoices'), ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER']],
+      ['create customer', (a) => a.post('/v1/parties').send(customerBody), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['send', (a) => a.post(`/v1/invoices/${none}/send`).send({ to: ['a@example.test'], subject: 's' }), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['company settings', (a) => a.put('/v1/company').send(company), ['OWNER', 'ADMIN']],
+      ['void payment', (a) => a.delete(`/v1/payments/${none}`), ['OWNER', 'ADMIN']],
+      ['activity log', (a) => a.get('/v1/audit-events'), ['OWNER', 'ADMIN', 'ACCOUNTANT']],
+      ['export', (a) => a.get('/v1/export'), ['OWNER', 'ACCOUNTANT']],
+      ['manage team', (a) => a.post('/v1/team/invitations').send({ email: uniqueEmail('p'), role: 'VIEWER' }), ['OWNER', 'ADMIN']],
+      ['close workspace', (a) => a.post('/v1/tenant/close').send({ password: 'wrong-password-1', confirmName: 'x' }), ['OWNER']],
+      ['store PDF', (a) => a.put(`/v1/invoices/${none}/pdf`).set('Content-Type', 'application/pdf').set('X-Internal-Token', env.internalToken).send(pdfBytes()), ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER']],
+      ['read team', (a) => a.get('/v1/team'), ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER']],
+    ];
+    for (const role of ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER'] as const) {
+      const r = await asRole(role);
+      for (const [name, call, allowed] of matrix) {
+        const status = (await call(r.agent as never)).status;
+        expect({ role, name, forbidden: status === 403 }, `${role} ${name} -> ${status}`).toEqual({ role, name, forbidden: !allowed.includes(role) });
+      }
+    }
+  });
+
+  it('shows invitations only to OWNER and ADMIN', async () => {
+    const w = await workspaceWith();
+    await invite(w.agent as never, uniqueEmail('pending'), 'MEMBER');
+    const admin2 = await w.join('ADMIN');
+    const acc = await w.join('ACCOUNTANT');
+    expect((await w.agent.get('/v1/team').expect(200)).body.invitations).toHaveLength(1);
+    expect((await admin2.agent.get('/v1/team').expect(200)).body.invitations).toHaveLength(1);
+    const t = (await acc.agent.get('/v1/team').expect(200)).body;
+    expect(t.invitations).toEqual([]);
+    expect(t.members).toHaveLength(3);
+    expect(t.members.filter((m: { isYou: boolean }) => m.isYou)).toHaveLength(1);
+  });
+});
+
+describe('team: invitations', () => {
+  it('invites, previews and accepts as a new user, once', async () => {
+    const w = await workspaceWith();
+    const email = uniqueEmail('Newbie');
+    const { res, token } = await invite(w.agent as never, email, 'MEMBER');
+    expect(res.body).toMatchObject({ email: email.toLowerCase(), role: 'MEMBER', invitedByName: 'Test User' });
+    const mail = await waitMail(email, 'Invitation');
+    expect(mail.html).toContain('Société Test');
+    expect(mail.text).toMatch(/[؀-ۿ]/);
+    expect(new URL(mail.link('token=')).pathname).toBe('/invitation');
+    expect(((await admin.query('select token_hash from invitations where id = $1', [res.body.id])).rows[0].token_hash as string)).not.toContain(token);
+    const days = (new Date(res.body.expiresAt).getTime() - new Date(res.body.createdAt).getTime()) / 86_400_000;
+    expect(Math.round(days)).toBe(7);
+
+    const preview = (await anon.get(`/v1/auth/invitations/${token}`).expect(200)).body;
+    expect(preview).toEqual({ tenantName: 'Société Test', email: email.toLowerCase(), role: 'MEMBER', inviterName: 'Test User', accountExists: false });
+    const agent = request.agent(app.getHttpServer());
+    await agent.post('/v1/auth/invitations/accept').send({ token }).expect(422);
+    await agent.post('/v1/auth/invitations/accept').send({ token, name: 'Nouvelle', password: email }).expect(422);
+    const accepted = await agent.post('/v1/auth/invitations/accept').send({ token, name: 'Nouvelle', password: PASSWORD }).expect(200);
+    expect(accepted.body).toMatchObject({ role: 'MEMBER', tenant: { id: w.me.tenant.id }, user: { name: 'Nouvelle' } });
+    expect(accepted.body.memberships).toHaveLength(1);
+    expect((await agent.get('/v1/me').expect(200)).body.tenant.id).toBe(w.me.tenant.id);
+    await anon.post('/v1/auth/sign-in').send({ email, password: PASSWORD }).expect(200);
+    expect((await anon.get(`/v1/auth/invitations/${token}`)).body.code).toBe('INVALID_TOKEN');
+    const reuse = await request.agent(app.getHttpServer()).post('/v1/auth/invitations/accept').send({ token, name: 'X', password: PASSWORD });
+    expect([reuse.status, reuse.body.code]).toEqual([404, 'INVALID_TOKEN']);
+    expect((await w.agent.get('/v1/team').expect(200)).body.invitations).toEqual([]);
+    expect(await events(w.me.tenant.id, 'team.invited')).toHaveLength(1);
+    expect(await events(w.me.tenant.id, 'team.joined')).toHaveLength(1);
+  });
+
+  it('lets an existing account accept while signed in as that email, and switch', async () => {
+    const w = await workspaceWith();
+    const guest = await ownerWithCompany();
+    await guest.agent.post('/v1/parties').send(customerBody).expect(201);
+    const { token } = await invite(w.agent as never, guest.me.user.email, 'ACCOUNTANT');
+    expect((await anon.get(`/v1/auth/invitations/${token}`).expect(200)).body.accountExists).toBe(true);
+
+    const stranger = await ownerWithCompany();
+    const signedOut = await anon.post('/v1/auth/invitations/accept').send({ token });
+    expect([signedOut.status, signedOut.body.code]).toEqual([401, 'SIGN_IN_REQUIRED']);
+    const wrong = await stranger.agent.post('/v1/auth/invitations/accept').send({ token });
+    expect([wrong.status, wrong.body.code]).toEqual([403, 'WRONG_ACCOUNT']);
+
+    const sessionsBefore = (await admin.query('select count(*)::int n from sessions where user_id = $1', [guest.me.user.id])).rows[0].n;
+    const ok = await guest.agent.post('/v1/auth/invitations/accept').send({ token }).expect(200);
+    expect(ok.body.tenant.id).toBe(w.me.tenant.id);
+    expect(ok.body.role).toBe('ACCOUNTANT');
+    expect(ok.body.memberships).toHaveLength(2);
+    expect((await admin.query('select count(*)::int n from sessions where user_id = $1', [guest.me.user.id])).rows[0].n).toBe(sessionsBefore);
+    expect((await guest.agent.get('/v1/parties').expect(200)).body).toEqual([]);
+
+    const back = await guest.agent.post('/v1/auth/switch-tenant').send({ tenantId: guest.me.tenant.id }).expect(200);
+    expect(back.body.role).toBe('OWNER');
+    expect((await guest.agent.get('/v1/parties').expect(200)).body).toHaveLength(1);
+    await anon.post('/v1/auth/invitations/accept').send({ token }).expect(404);
+  });
+
+  it('expires, resends with a new token, and revokes', async () => {
+    const w = await workspaceWith();
+    const email = uniqueEmail('late');
+    const { res, token } = await invite(w.agent as never, email, 'VIEWER');
+    await admin.query("update invitations set expires_at = now() - interval '1 minute' where id = $1", [res.body.id]);
+    expect((await anon.get(`/v1/auth/invitations/${token}`)).status).toBe(404);
+    expect((await anon.post('/v1/auth/invitations/accept').send({ token, name: 'L', password: PASSWORD })).body.code).toBe('INVALID_TOKEN');
+    expect((await invite(w.agent as never, email, 'VIEWER')).res.body.code).toBe('ALREADY_INVITED');
+
+    transport.clear();
+    const again = await w.agent.post(`/v1/team/invitations/${res.body.id}/resend`).expect(200);
+    expect(new Date(again.body.expiresAt).getTime()).toBeGreaterThan(Date.now() + 6 * 86_400_000);
+    const fresh = tokenOf(await waitMail(email, 'Invitation'));
+    expect(fresh).not.toBe(token);
+    await anon.get(`/v1/auth/invitations/${token}`).expect(404);
+    await anon.get(`/v1/auth/invitations/${fresh}`).expect(200);
+
+    await w.agent.delete(`/v1/team/invitations/${res.body.id}`).expect(204);
+    await anon.get(`/v1/auth/invitations/${fresh}`).expect(404);
+    await w.agent.delete(`/v1/team/invitations/${res.body.id}`).expect(404);
+    expect(await events(w.me.tenant.id, 'team.invitation_revoked')).toHaveLength(1);
+    expect((await invite(w.agent as never, email, 'VIEWER')).res.status).toBe(201);
+  });
+
+  it('refuses existing members, and caps invitations per day', async () => {
+    const w = await workspaceWith();
+    const m = await w.join('MEMBER');
+    const dup = await invite(w.agent as never, m.email.toUpperCase(), 'VIEWER');
+    expect([dup.res.status, dup.res.body.code]).toEqual([409, 'ALREADY_MEMBER']);
+    expect((await invite(w.agent as never, w.me.user.email, 'VIEWER')).res.body.code).toBe('ALREADY_MEMBER');
+    await admin.query(
+      `insert into invitations (tenant_id, email, role, token_hash, expires_at, revoked_at)
+       select $1, 'bulk' || g || '@example.test', 'VIEWER', md5(g::text), now() + interval '7 days', now() from generate_series(1, 28) g`,
+      [w.me.tenant.id],
+    );
+    expect((await invite(w.agent as never, uniqueEmail('ok'), 'VIEWER')).res.status).toBe(201);
+    const over = await w.agent.post('/v1/team/invitations').send({ email: uniqueEmail('over'), role: 'VIEWER' });
+    expect([over.status, over.body.code]).toEqual([429, 'INVITE_LIMIT']);
+  });
+
+  it('lets only an OWNER hand out or touch ownership', async () => {
+    const w = await workspaceWith();
+    const adm = await w.join('ADMIN');
+    const mem = await w.join('MEMBER');
+    expect((await adm.agent.post('/v1/team/invitations').send({ email: uniqueEmail('o'), role: 'OWNER' })).status).toBe(403);
+    expect((await adm.agent.patch(`/v1/team/members/${mem.me.user.id}`).send({ role: 'OWNER' })).status).toBe(403);
+    expect((await adm.agent.patch(`/v1/team/members/${w.me.user.id}`).send({ role: 'MEMBER' })).status).toBe(403);
+    expect((await adm.agent.delete(`/v1/team/members/${w.me.user.id}`)).status).toBe(403);
+    expect((await mem.agent.patch(`/v1/team/members/${mem.me.user.id}`).send({ role: 'ADMIN' })).status).toBe(403);
+    const ownerInvite = await w.agent.post('/v1/team/invitations').send({ email: uniqueEmail('o2'), role: 'OWNER' }).expect(201);
+    expect((await adm.agent.delete(`/v1/team/invitations/${ownerInvite.body.id}`)).status).toBe(403);
+
+    transport.clear();
+    const promoted = await adm.agent.patch(`/v1/team/members/${mem.me.user.id}`).send({ role: 'VIEWER' }).expect(200);
+    expect(promoted.body).toMatchObject({ role: 'VIEWER', isYou: false });
+    await waitMail(mem.email, 'rôle a changé');
+    expect((await mem.agent.get('/v1/me')).body.role).toBe('VIEWER');
+    await w.agent.patch(`/v1/team/members/${mem.me.user.id}`).send({ role: 'OWNER' }).expect(200);
+    expect((await events(w.me.tenant.id, 'team.role_changed')).length).toBe(2);
+    await adm.agent.patch(`/v1/team/members/${w.me.user.id}`).send({ role: 'ADMIN' }).expect(403);
+    await w.agent.patch(`/v1/team/members/${w.me.user.id}`).send({ role: 'ADMIN' }).expect(200);
+  });
+
+  it('never leaves a workspace without an OWNER, even under concurrent demotions', async () => {
+    const w = await workspaceWith();
+    const last = await w.agent.patch(`/v1/team/members/${w.me.user.id}`).send({ role: 'ADMIN' });
+    expect([last.status, last.body.code]).toEqual([409, 'LAST_OWNER']);
+    expect((await w.agent.delete(`/v1/team/members/${w.me.user.id}`)).body.code).toBe('LAST_OWNER');
+    const m = await w.join('MEMBER');
+    await w.agent.patch(`/v1/team/members/${m.me.user.id}`).send({ role: 'OWNER' }).expect(200);
+    for (let i = 0; i < 3; i++) {
+      const [a, b] = await Promise.all([
+        w.agent.patch(`/v1/team/members/${m.me.user.id}`).send({ role: 'ADMIN' }),
+        m.agent.patch(`/v1/team/members/${w.me.user.id}`).send({ role: 'ADMIN' }),
+      ]);
+      expect([a.status, b.status].sort()).toEqual([200, 409]);
+      const owners = (await admin.query("select count(*)::int n from memberships where tenant_id = $1 and role = 'OWNER'", [w.me.tenant.id])).rows[0].n;
+      expect(owners).toBe(1);
+      await admin.query("update memberships set role = 'OWNER' where tenant_id = $1", [w.me.tenant.id]);
+    }
+    const [x, y] = await Promise.all([
+      w.agent.delete(`/v1/team/members/${m.me.user.id}`),
+      m.agent.delete(`/v1/team/members/${w.me.user.id}`),
+    ]);
+    expect([x.status, y.status].sort()).toEqual([204, 409]);
+  });
+});
+
+describe('team: several workspaces', () => {
+  it('removes or lets leave, revoking only that workspace\'s sessions', async () => {
+    const a = await workspaceWith();
+    const b = await ownerWithCompany();
+    const x = await a.join('MEMBER');
+    transport.clear();
+    const { token } = await invite(b.agent as never, x.email, 'VIEWER');
+    await x.agent.post('/v1/auth/invitations/accept').send({ token }).expect(200);
+    const onA = request.agent(app.getHttpServer());
+    await onA.post('/v1/auth/sign-in').send({ email: x.email, password: PASSWORD }).expect(200);
+    await onA.post('/v1/auth/switch-tenant').send({ tenantId: a.me.tenant.id }).expect(200);
+    const onB = x.agent;
+    expect((await onB.get('/v1/me').expect(200)).body.tenant.id).toBe(b.me.tenant.id);
+
+    transport.clear();
+    await a.agent.delete(`/v1/team/members/${x.me.user.id}`).expect(204);
+    await waitMail(x.email, 'Accès retiré');
+    await onA.get('/v1/me').expect(401);
+    expect((await onB.get('/v1/me').expect(200)).body.memberships).toHaveLength(1);
+    expect((await admin.query('select 1 from users where id = $1', [x.me.user.id])).rowCount).toBe(1);
+    expect((await events(a.me.tenant.id, 'team.member_removed')).length).toBe(1);
+    await a.agent.delete(`/v1/team/members/${x.me.user.id}`).expect(404);
+  });
+
+  it('lets any role leave on its own', async () => {
+    const w = await workspaceWith();
+    for (const role of ['ACCOUNTANT', 'VIEWER']) {
+      const m = await w.join(role);
+      await m.agent.delete(`/v1/team/members/${m.me.user.id}`).expect(204);
+      await m.agent.get('/v1/me').expect(401);
+    }
+    const m = await w.join('MEMBER');
+    expect((await m.agent.delete(`/v1/team/members/${w.me.user.id}`)).status).toBe(403);
+  });
+
+  it('switches workspace, keeps data apart, and signs in to the last one used', async () => {
+    const a = await ownerWithCompany();
+    const b = await ownerWithCompany();
+    const pa = (await a.agent.post('/v1/parties').send({ ...customerBody, name: 'Client de A' }).expect(201)).body;
+    await b.agent.post('/v1/parties').send({ ...customerBody, name: 'Client de B' }).expect(201);
+    const { token } = await invite(b.agent as never, a.me.user.email, 'MEMBER');
+    await a.agent.post('/v1/auth/invitations/accept').send({ token }).expect(200);
+    const names = async () => (await a.agent.get('/v1/parties').expect(200)).body.map((p: { name: string }) => p.name);
+    expect(await names()).toEqual(['Client de B']);
+    await a.agent.get(`/v1/parties/${pa.id}`).expect(404);
+    const me = (await a.agent.post('/v1/auth/switch-tenant').send({ tenantId: a.me.tenant.id }).expect(200)).body;
+    expect(me.tenant.id).toBe(a.me.tenant.id);
+    expect(await names()).toEqual(['Client de A']);
+    await a.agent.get(`/v1/parties/${pa.id}`).expect(200);
+
+    const fresh = (await anon.post('/v1/auth/sign-in').send({ email: a.me.user.email, password: PASSWORD }).expect(200)).body;
+    expect(fresh.tenant.id).toBe(a.me.tenant.id);
+    await a.agent.post('/v1/auth/switch-tenant').send({ tenantId: b.me.tenant.id }).expect(200);
+    expect((await anon.post('/v1/auth/sign-in').send({ email: a.me.user.email, password: PASSWORD }).expect(200)).body.tenant.id).toBe(b.me.tenant.id);
+    await admin.query('update memberships set last_used_at = null where user_id = $1', [a.me.user.id]);
+    expect((await anon.post('/v1/auth/sign-in').send({ email: a.me.user.email, password: PASSWORD }).expect(200)).body.tenant.id).toBe(a.me.tenant.id);
+
+    const stranger = await ownerWithCompany();
+    expect((await a.agent.post('/v1/auth/switch-tenant').send({ tenantId: stranger.me.tenant.id })).status).toBe(403);
+    expect((await a.agent.post('/v1/auth/switch-tenant').send({ tenantId: '00000000-0000-4000-8000-000000000000' })).status).toBe(403);
+    await anon.post('/v1/auth/switch-tenant').send({ tenantId: a.me.tenant.id }).expect(401);
+    expect((await a.agent.get('/v1/me')).body.memberships).toHaveLength(2);
+  });
+
+  it('closing a workspace keeps shared accounts and their other membership', async () => {
+    const a = await workspaceWith();
+    const b = await ownerWithCompany();
+    const shared = await a.join('MEMBER');
+    const solo = await a.join('VIEWER');
+    const { token } = await invite(b.agent as never, shared.email, 'ACCOUNTANT');
+    await shared.agent.post('/v1/auth/invitations/accept').send({ token }).expect(200);
+    await invite(a.agent as never, uniqueEmail('pending'), 'MEMBER');
+    transport.clear();
+    await a.agent.post('/v1/tenant/close').send({ password: PASSWORD, confirmName: 'Société Test' }).expect(204);
+    await waitMail(shared.email, 'fermé');
+    await waitMail(solo.email, 'fermé');
+    expect((await admin.query('select 1 from users where id = $1', [shared.me.user.id])).rowCount).toBe(1);
+    expect((await admin.query('select 1 from users where id = $1', [solo.me.user.id])).rowCount).toBe(0);
+    expect((await admin.query('select tenant_id from memberships where user_id = $1', [shared.me.user.id])).rows).toEqual([{ tenant_id: b.me.tenant.id }]);
+    expect((await admin.query('select 1 from invitations where tenant_id = $1', [a.me.tenant.id])).rowCount).toBe(0);
+    await solo.agent.get('/v1/me').expect(401);
+    expect((await shared.agent.get('/v1/me').expect(200)).body.tenant.id).toBe(b.me.tenant.id);
+    const back = (await anon.post('/v1/auth/sign-in').send({ email: shared.email, password: PASSWORD }).expect(200)).body;
+    expect(back.tenant.id).toBe(b.me.tenant.id);
+    expect(back.memberships).toHaveLength(1);
+  });
+});
+
+describe('team: tables are protected', () => {
+  it('forces RLS with a policy on the new tables', async () => {
+    const { rows } = await admin.query(`
+      select c.relname, c.relrowsecurity, c.relforcerowsecurity,
+        (select count(*)::int from pg_policies p where p.schemaname = 'public' and p.tablename = c.relname) as policies
+      from pg_class c where c.relname in ('invoice_deliveries', 'invitations')`);
+    expect(rows.map((r) => r.relname).sort()).toEqual(['invitations', 'invoice_deliveries']);
+    for (const r of rows) expect([r.relrowsecurity, r.relforcerowsecurity, r.policies > 0]).toEqual([true, true, true]);
+  });
+
+  it('keeps invitations of another workspace invisible to the business role', async () => {
+    const a = await workspaceWith();
+    const b = await workspaceWith();
+    const { res } = await invite(a.agent as never, uniqueEmail('hidden'), 'MEMBER');
+    const client = await appPool.connect();
+    try {
+      await client.query('begin');
+      await client.query("select set_config('app.tenant_id', $1, true)", [b.me.tenant.id]);
+      expect((await client.query('select 1 from invitations where id = $1', [res.body.id])).rowCount).toBe(0);
+      await client.query('rollback');
+    } finally {
+      client.release();
+    }
   });
 });

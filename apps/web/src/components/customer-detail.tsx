@@ -107,7 +107,7 @@ export function CustomerDetail({ party, invoices, today }: { party: Party; invoi
           </div>
         </div>
 
-        <InvoicesView invoices={invoices} today={today} hideCustomer />
+        <InvoicesView invoices={invoices} today={today} hideCustomer customerId={party.id} />
       </div>
 
       <PartyDrawer isOpen={editing} onOpenChange={setEditing} party={party} onDelete={canAdmin ? () => setDeleting(true) : undefined} />

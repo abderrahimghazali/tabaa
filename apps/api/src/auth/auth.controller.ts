@@ -20,6 +20,7 @@ import {
   ResetPasswordInput,
   SignInInput,
   SignUpInput,
+  SwitchTenantInput,
   VerifyEmailInput,
   type Me,
   type MfaSetup,
@@ -31,9 +32,10 @@ import { AuditService } from '../audit/audit.service.js';
 import { requestInfo } from '../common/client-ip.js';
 import { readCookie } from '../common/cookies.js';
 import { ApiException, conflict, invalid } from '../common/errors.js';
+import { AllowViewer } from '../common/roles.js';
 import { MailService } from '../mail/mail.service.js';
 import type { AuthUser } from './auth-types.js';
-import { AuthService, MFA_COOKIE, normalizeEmail, toMe } from './auth.service.js';
+import { AuthService, MFA_COOKIE, normalizeEmail } from './auth.service.js';
 import { env } from '../env.js';
 import { cookieSecure, sensitiveLimit, signInAccountLimit, signInIpLimit, signUpLimit } from './security-policy.js';
 import { accountEmail } from './account-email.js';
@@ -123,6 +125,7 @@ export class AuthController {
       return { mfaRequired: true };
     }
     await this.signInService.signIn(me.user.id, { method: 'password', metadata: { tenantId: me.tenant.id } });
+    await this.auth.touchMembership(me.user.id, me.tenant.id);
     await this.audit.recordDetached({
       action: 'auth.sign_in',
       tenantId: me.tenant.id,
@@ -150,7 +153,7 @@ export class AuthController {
     const ok = body.code
       ? await this.mfa.verifyTotp(challenge.userId, body.code)
       : await this.mfa.verifyRecoveryCode(challenge.userId, body.recoveryCode!);
-    const m = await this.auth.membershipOf(challenge.userId);
+    const m = await this.auth.membershipOf(challenge.userId, challenge.tenantId);
     if (!ok || !m) {
       await this.auth.failChallenge(challenge.id);
       await this.audit.recordDetached({
@@ -168,16 +171,13 @@ export class AuthController {
     const issued = await this.sessions.create(challenge.userId, { metadata: { tenantId: challenge.tenantId } });
     res.append('Set-Cookie', issued.cookie);
     const actor = { tenantId: challenge.tenantId, actorUserId: challenge.userId, actorName: m.name, ...info };
+    await this.auth.touchMembership(challenge.userId, challenge.tenantId);
     await this.audit.recordDetached({ action: 'auth.sign_in', ...actor });
     if (body.recoveryCode) await this.audit.recordDetached({ action: 'auth.mfa_recovery_used', ...actor });
-    return {
-      user: { id: challenge.userId, name: m.name, email: m.email },
-      tenant: { id: m.tenantId, name: m.tenantName },
-      role: m.role as Me['role'],
-      mfaEnabled: true,
-    };
+    return (await this.auth.meFor(challenge.userId, challenge.tenantId))!;
   }
 
+  @AllowViewer()
   @Post('auth/mfa/setup')
   async mfaSetup(@CurrentUser() user: AuthUser): Promise<MfaSetup> {
     const { secret, uri } = await this.mfa.enroll(user.id, user.email);
@@ -186,6 +186,7 @@ export class AuthController {
 
   @HttpCode(200)
   @Throttle({ default: { limit: sensitiveLimit(env.nodeEnv, 10), ttl: minutes(15) } })
+  @AllowViewer()
   @Post('auth/mfa/enable')
   async mfaEnable(
     @Body({ schema: MfaEnableInput }) body: MfaEnableInput,
@@ -203,6 +204,7 @@ export class AuthController {
 
   @HttpCode(204)
   @Throttle({ default: { limit: sensitiveLimit(env.nodeEnv, 10), ttl: minutes(15) } })
+  @AllowViewer()
   @Post('auth/mfa/disable')
   async mfaDisable(
     @Body({ schema: Reauth }) body: Reauth,
@@ -220,6 +222,7 @@ export class AuthController {
 
   @HttpCode(200)
   @Throttle({ default: { limit: sensitiveLimit(env.nodeEnv, 10), ttl: minutes(15) } })
+  @AllowViewer()
   @Post('auth/mfa/recovery-codes')
   async mfaRecoveryCodes(
     @Body({ schema: Reauth }) body: Reauth,
@@ -252,6 +255,7 @@ export class AuthController {
 
   @Authenticate({ optional: true })
   @HttpCode(204)
+  @AllowViewer()
   @Post('auth/sign-out')
   async signOut(@Req() req: any) {
     const user: AuthUser | undefined = req.user;
@@ -268,6 +272,7 @@ export class AuthController {
   }
 
   @HttpCode(204)
+  @AllowViewer()
   @Post('auth/sign-out-all')
   async signOutAll(@CurrentUser() user: AuthUser, @Req() req: any) {
     await this.signInService.signOutEverywhere(user.id);
@@ -324,7 +329,30 @@ export class AuthController {
   }
 
   @Get('me')
-  me(@CurrentUser() user: AuthUser): Me {
-    return toMe(user);
+  async me(@CurrentUser() user: AuthUser): Promise<Me> {
+    return (await this.auth.meFor(user.id, user.tenantId))!;
+  }
+
+  @AllowViewer()
+  @HttpCode(200)
+  @Throttle({ default: { limit: sensitiveLimit(env.nodeEnv, 30), ttl: minutes(15) } })
+  @Post('auth/switch-tenant')
+  async switchTenant(
+    @Body({ schema: SwitchTenantInput }) body: SwitchTenantInput,
+    @CurrentUser() user: AuthUser,
+    @CurrentSession() session: SessionRecord,
+    @Req() req: any,
+  ): Promise<Me> {
+    if (!(await this.auth.switchTenant(session.id, user.id, body.tenantId))) {
+      throw new ApiException(403, 'FORBIDDEN', 'Vous n’appartenez pas à cet espace de travail.');
+    }
+    await this.audit.recordDetached({
+      action: 'auth.tenant_switched',
+      tenantId: body.tenantId,
+      actorUserId: user.id,
+      actorName: user.name,
+      ...requestInfo(req),
+    });
+    return (await this.auth.meFor(user.id, body.tenantId))!;
   }
 }

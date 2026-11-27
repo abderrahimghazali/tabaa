@@ -122,6 +122,5 @@ export const auth = {
   "role.OWNER": ["Propriétaire", "مالك"],
   "role.ADMIN": ["Administrateur", "مسؤول"],
   "role.MEMBER": ["Membre", "عضو"],
-  "role.VIEWER": ["Lecteur", "قارئ"],
-  "role.viewerNote": ["Votre rôle est en lecture seule : vous ne pouvez pas modifier les données.", "دورك للقراءة فقط: لا يمكنك تعديل البيانات."],
+  "role.VIEWER": ["Lecture seule", "للقراءة فقط"],
 } as const satisfies Record<string, readonly [string, string]>;

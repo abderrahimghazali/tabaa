@@ -154,6 +154,39 @@ export type Payment = z.infer<typeof Payment>;
 export const PaymentInput = Payment.omit({ id: true, invoiceId: true });
 export type PaymentInput = z.infer<typeof PaymentInput>;
 
+export const DeliveryKind = z.enum(["INVOICE", "REMINDER"]);
+export type DeliveryKind = z.infer<typeof DeliveryKind>;
+
+// One email sent to the customer about an issued invoice.
+export const InvoiceDelivery = z.object({
+  id: Id,
+  kind: DeliveryKind,
+  to: z.array(z.email()),
+  cc: z.array(z.email()),
+  subject: z.string(),
+  sentAt: z.string(),
+  sentByName: z.string().nullable(),
+});
+export type InvoiceDelivery = z.infer<typeof InvoiceDelivery>;
+
+export const SendInvoiceInput = z.object({
+  kind: DeliveryKind.default("INVOICE"),
+  to: z.array(z.email()).min(1).max(5),
+  cc: z.array(z.email()).max(5).default([]),
+  subject: z.string().min(1).max(200),
+  message: z.string().max(4000).default(""),
+  attachUbl: z.boolean().default(false),
+});
+export type SendInvoiceInput = z.infer<typeof SendInvoiceInput>;
+
+// What the send dialog is prefilled with.
+export const SendInvoicePreview = z.object({
+  to: z.array(z.email()),
+  subject: z.string(),
+  message: z.string(),
+});
+export type SendInvoicePreview = z.infer<typeof SendInvoicePreview>;
+
 export const Invoice = InvoiceInput.extend({
   id: Id,
   number: z.string().nullable(),
@@ -170,6 +203,7 @@ export const Invoice = InvoiceInput.extend({
   // The company as it was when the invoice was issued; the live company for drafts.
   seller: Company.nullable(),
   payments: z.array(Payment),
+  deliveries: z.array(InvoiceDelivery),
 });
 export type Invoice = z.infer<typeof Invoice>;
 
@@ -188,6 +222,7 @@ export const InvoiceSummary = Invoice.pick({
   customerName: z.string(),
   totalGross: Decimal,
   amountDue: Decimal,
+  lastSentAt: z.string().nullable(),
 });
 export type InvoiceSummary = z.infer<typeof InvoiceSummary>;
 
@@ -229,7 +264,8 @@ export const ApiError = z.object({
 });
 export type ApiError = z.infer<typeof ApiError>;
 
-export const Role = z.enum(["OWNER", "ADMIN", "MEMBER", "VIEWER"]);
+// ACCOUNTANT is the external accountant: reads everything and exports, changes nothing.
+export const Role = z.enum(["OWNER", "ADMIN", "MEMBER", "ACCOUNTANT", "VIEWER"]);
 export type Role = z.infer<typeof Role>;
 
 const Password = z.string().min(10).max(128);
@@ -256,6 +292,8 @@ export const Me = z.object({
   tenant: z.object({ id: Id, name: z.string() }),
   role: Role,
   mfaEnabled: z.boolean(),
+  // Every workspace this user belongs to, the active one included.
+  memberships: z.array(z.object({ tenantId: Id, tenantName: z.string(), role: Role })),
 });
 export type Me = z.infer<typeof Me>;
 
@@ -306,3 +344,54 @@ export type Reauth = z.infer<typeof Reauth>;
 
 export const CloseTenantInput = Reauth.extend({ confirmName: z.string().min(1) });
 export type CloseTenantInput = z.infer<typeof CloseTenantInput>;
+
+export const TeamMember = z.object({
+  userId: z.string(),
+  name: z.string(),
+  email: z.email(),
+  role: Role,
+  joinedAt: z.string(),
+  mfaEnabled: z.boolean(),
+  isYou: z.boolean(),
+});
+export type TeamMember = z.infer<typeof TeamMember>;
+
+export const Invitation = z.object({
+  id: Id,
+  email: z.email(),
+  role: Role,
+  invitedByName: z.string().nullable(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+});
+export type Invitation = z.infer<typeof Invitation>;
+
+export const Team = z.object({ members: z.array(TeamMember), invitations: z.array(Invitation) });
+export type Team = z.infer<typeof Team>;
+
+export const InviteInput = z.object({ email: z.email(), role: Role });
+export type InviteInput = z.infer<typeof InviteInput>;
+
+export const ChangeRoleInput = z.object({ role: Role });
+export type ChangeRoleInput = z.infer<typeof ChangeRoleInput>;
+
+// Shown on the invitation page before accepting.
+export const InvitationPreview = z.object({
+  tenantName: z.string(),
+  email: z.email(),
+  role: Role,
+  inviterName: z.string().nullable(),
+  accountExists: z.boolean(),
+});
+export type InvitationPreview = z.infer<typeof InvitationPreview>;
+
+// `name` and `password` are required when no account exists for the invited email.
+export const AcceptInvitationInput = z.object({
+  token: z.string().min(1),
+  name: z.string().min(1).max(120).optional(),
+  password: z.string().min(10).max(128).optional(),
+});
+export type AcceptInvitationInput = z.infer<typeof AcceptInvitationInput>;
+
+export const SwitchTenantInput = z.object({ tenantId: Id });
+export type SwitchTenantInput = z.infer<typeof SwitchTenantInput>;

@@ -3,32 +3,22 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import type {
+  DeliveryKind,
+  Role,
+  SendInvoiceInput,
   CompanyInput,
+  InviteInput,
   InvoiceInput,
   ItemInput,
   PartyInput,
   PaymentInput,
 } from "@facture/core";
 import { api, ApiFailure } from "./api";
+import { ensureStoredPdf } from "./invoice-pdf";
+import { PdfTimeout, PdfUnavailable } from "./pdf-render";
 import { getT } from "./locale";
+import { run } from "./run";
 import type { Result } from "./result";
-
-async function run<T>(fn: () => Promise<T>): Promise<Result<T>> {
-  try {
-    const data = await fn();
-    revalidatePath("/", "layout");
-    return { ok: true, data };
-  } catch (e) {
-    if (e instanceof ApiFailure) {
-      if (e.error.code === "FORBIDDEN") {
-        const { t } = await getT();
-        return { ok: false, error: { ...e.error, message: t("error.forbidden") } };
-      }
-      return { ok: false, error: e.error };
-    }
-    throw e;
-  }
-}
 
 export async function setLocale(locale: "fr" | "ar") {
   (await cookies()).set("locale", locale, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
@@ -77,3 +67,32 @@ export async function loadAuditEvents(before?: string) {
     throw e;
   }
 }
+
+export async function getSendPreview(id: string, kind: DeliveryKind) {
+  try {
+    return { ok: true as const, data: await api.sendPreview(id, kind) };
+  } catch (e) {
+    if (e instanceof ApiFailure) return { ok: false as const, error: e.error };
+    throw e;
+  }
+}
+
+/** Stores the invoice PDF if it is missing, then asks the API to email it. */
+export async function sendInvoice(id: string, input: SendInvoiceInput): Promise<Result<Awaited<ReturnType<typeof api.sendInvoice>>>> {
+  try {
+    await ensureStoredPdf(id);
+  } catch (e) {
+    if (e instanceof ApiFailure) return { ok: false, error: e.error };
+    const { t } = await getT();
+    if (e instanceof PdfUnavailable) return { ok: false, error: { code: "PDF_UNAVAILABLE", message: t("pdf.unavailable") } };
+    if (e instanceof PdfTimeout) return { ok: false, error: { code: "PDF_TIMEOUT", message: t("pdf.timeout") } };
+    return { ok: false, error: { code: "PDF_FAILED", message: t("pdf.failed") } };
+  }
+  return run(() => api.sendInvoice(id, input));
+}
+
+export const inviteMember = async (input: InviteInput) => run(() => api.invite(input));
+export const resendInvitation = async (id: string) => run(() => api.resendInvitation(id));
+export const revokeInvitation = async (id: string) => run(() => api.revokeInvitation(id));
+export const changeMemberRole = async (userId: string, role: Role) => run(() => api.changeRole(userId, role));
+export const removeMember = async (userId: string) => run(() => api.removeMember(userId));

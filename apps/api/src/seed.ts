@@ -116,17 +116,23 @@ const tenantDb = app.get(TenantDb);
 const tenant = env.tenantId;
 const tx = <T>(fn: () => Promise<T>) => tenantDb.run(tenant, fn);
 
+// Second workspace: demo@ is its OWNER and comptable@ its ACCOUNTANT, so wipe it first (shared accounts survive a wipe).
+const tenant2 = `${tenant.slice(0, -4)}f002`;
+const tx2 = <T>(fn: () => Promise<T>) => tenantDb.run(tenant2, fn);
+await wipeTenant(tenant2);
 await wipeTenant(tenant);
 
 const demo = { name: 'Salma Bennani', email: 'demo@tabaa.ma', password: 'tabaa-demo-2026' };
 const accounts = app.get(AuthService);
 const passwordHash = await accounts.hashPassword(demo.password);
-await accounts.createAccount({ name: demo.name, email: demo.email, passwordHash, tenantName: 'Maghreb Digital Services', tenantId: tenant });
+const { userId: demoId } = await accounts.createAccount({ name: demo.name, email: demo.email, passwordHash, tenantName: 'Maghreb Digital Services', tenantId: tenant });
 const team = [
   { name: 'Youssef El Amrani', email: 'membre@tabaa.ma', role: 'MEMBER' as const },
   { name: 'Nadia Berrada', email: 'lecteur@tabaa.ma', role: 'VIEWER' as const },
+  { name: 'Karim Tazi', email: 'comptable@tabaa.ma', role: 'ACCOUNTANT' as const },
 ];
-for (const m of team) await accounts.addMember({ ...m, passwordHash, tenantId: tenant });
+const memberIds: Record<string, string> = {};
+for (const m of team) memberIds[m.email] = await accounts.addMember({ ...m, passwordHash, tenantId: tenant });
 
 const company = app.get(CompanyService);
 const parties = app.get(PartiesService);
@@ -195,7 +201,57 @@ const creditNote = await tx(() => invoices.creditNote(source.id));
 const issuedCn = await tx(() => invoices.issue(creditNote.id));
 console.log(issuedCn.number, 'avoir sur', source.number);
 
-console.log(`\nDemo accounts (password ${demo.password}):\n  ${demo.email} (OWNER)\n  ${team.map((m) => `${m.email} (${m.role})`).join('\n  ')}`);
+await accounts.createTenant({ id: tenant2, name: 'Atelier Zellige Fès SARL' });
+await accounts.addMembership(demoId, tenant2, 'OWNER');
+await accounts.addMembership(memberIds['comptable@tabaa.ma'], tenant2, 'ACCOUNTANT');
+await tx2(() =>
+  company.put({
+    name: 'Atelier Zellige Fès SARL',
+    legalForm: 'SARL',
+    capital: '100000.00',
+    address: addr('14 derb Lahlou, Fès el-Bali', 'Fès', '30000'),
+    ice: '002455667000013',
+    ifNumber: '33445566',
+    rcNumber: '41207',
+    rcCourt: 'Fès',
+    tpNumber: '14002233',
+    cnssNumber: '7120456',
+    vatRegime: 'QUARTERLY',
+    vatTaxPoint: 'RECEIPTS',
+    phone: '+212 5 35 63 20 18',
+    email: 'atelier@zellige-fes.ma',
+    bankName: 'Banque Populaire',
+    rib: '181780000123400045678934',
+    defaultPaymentTermDays: 30,
+    invoiceLanguage: 'fr',
+  }),
+);
+const fesCustomers: PartyInput[] = [
+  { kind: 'CUSTOMER', type: 'BUSINESS', name: 'Riad Dar Batha', ice: '002300450000067', ifNumber: '23004507', address: addr('3 derb Batha, Médina', 'Fès', '30200'), email: 'contact@riad-darbatha.ma' },
+  { kind: 'CUSTOMER', type: 'BUSINESS', name: 'Hôtel Palais Jamaï', ice: '001988776000021', ifNumber: '19887760', address: addr('Bab Guissa', 'Fès', '30000'), email: 'achats@palais-jamai.ma', paymentTermDays: 45 },
+  { kind: 'CUSTOMER', type: 'BUSINESS', name: 'Décor Méditerranée SARL', ice: '002101234000052', ifNumber: '21012349', address: addr('Zone industrielle Bouznika', 'Bouznika', '13500'), email: 'compta@decor-med.ma' },
+];
+const fesIds: string[] = [];
+for (const c of fesCustomers) fesIds.push((await tx2(() => parties.create(c))).id);
+const zellige = (qty: string, price: string, what: string): LineInput => ({ description: what, quantity: qty, unit: 'm²', unitPrice: price, discountPercent: '0', vatRate: '20' });
+const fesPlans: [cust: number, at: number, lines: LineInput[], paid?: number][] = [
+  [0, -50, [zellige('18', '650.00', 'Zellige traditionnel, patio')], 1],
+  [1, -34, [zellige('42', '720.00', 'Zellige émaillé, salon et hammam')], 0.5],
+  [2, -20, [zellige('25', '580.00', 'Fontaine et vasque en zellige')]],
+  [0, -6, [zellige('9', '690.00', 'Rénovation d’une niche murale')]],
+];
+for (const [cust, at, lines, paid] of fesPlans) {
+  const d = await tx2(() => invoices.create({ type: 'INVOICE', customerId: fesIds[cust], issueDate: day(at), currency: 'MAD', paymentMethod: 'TRANSFER', lines }));
+  const done = await tx2(() => invoices.issue(d.id));
+  if (paid) {
+    const amount = new Decimal(done.totals.amountDue).times(paid).toDecimalPlaces(2).toFixed(2);
+    await tx2(() => invoices.addPayment(done.id, { paidOn: day(at + 10), method: 'TRANSFER', amount }));
+  }
+  console.log(done.number, done.customer.name, done.totals.amountDue, '(Fès)');
+}
+await tx2(() => invoices.create({ type: 'INVOICE', customerId: fesIds[1], issueDate: day(0), currency: 'MAD', paymentMethod: 'TRANSFER', lines: [zellige('12', '720.00', 'Zellige émaillé, terrasse')] }));
+
+console.log(`\nDemo accounts (password ${demo.password}):\n  ${demo.email} (OWNER, also OWNER of Atelier Zellige Fès SARL)\n  ${team.map((m) => `${m.email} (${m.role})`).join('\n  ')}`);
 
 await app.close();
 process.exit(0);

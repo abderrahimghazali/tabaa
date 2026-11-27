@@ -8,7 +8,7 @@ export class AuditController {
   constructor(@Inject(AuditService) private readonly service: AuditService) {}
 
   @Get()
-  @Roles('OWNER', 'ADMIN')
+  @Roles('OWNER', 'ADMIN', 'ACCOUNTANT')
   list(@Query('limit') limit?: string, @Query('before') before?: string) {
     const n = limit === undefined ? 50 : Number(limit);
     if (!Number.isInteger(n) || n < 1 || n > 100) {

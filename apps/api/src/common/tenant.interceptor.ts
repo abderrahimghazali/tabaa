@@ -10,6 +10,7 @@ import { ALLOW_VIEWER } from './roles.js';
 import { denyRole } from './roles.js';
 
 const READ_ONLY = new Set(['GET', 'HEAD', 'OPTIONS']);
+const READ_ONLY_ROLES = new Set(['VIEWER', 'ACCOUNTANT']);
 
 @Injectable()
 export class TenantInterceptor implements NestInterceptor {
@@ -24,7 +25,7 @@ export class TenantInterceptor implements NestInterceptor {
     const user: AuthUser | undefined = req.user;
     if (!user) return next.handle();
     const viewerOk = this.reflector.get<boolean | undefined>(ALLOW_VIEWER, ctx.getHandler());
-    if (user.role === 'VIEWER' && !viewerOk && !READ_ONLY.has(req.method)) {
+    if (READ_ONLY_ROLES.has(user.role) && !viewerOk && !READ_ONLY.has(req.method)) {
       await denyRole(this.audit, req, user, 'lecture seule');
     }
     const meta = this.reflector.get<AuditMeta | undefined>(AUDIT, ctx.getHandler());

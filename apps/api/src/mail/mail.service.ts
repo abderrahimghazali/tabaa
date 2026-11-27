@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { Mailer } from '@nestjs/mail';
+import { Mailer, type MailSendOptions } from '@nestjs/mail';
 import { buildMail, type TemplateData, type TemplateName } from './templates.js';
 
 @Injectable()
@@ -12,6 +12,11 @@ export class MailService {
   // After the response: the request never waits for, or learns from, the mail server.
   queue<K extends TemplateName>(name: K, to: string, data: TemplateData[K]) {
     setImmediate(() => void this.sendNow(name, to, data));
+  }
+
+  // For mail the caller waits on: the error reaches the caller.
+  send(message: MailSendOptions) {
+    return this.mailer.send(message);
   }
 
   async sendNow<K extends TemplateName>(name: K, to: string, data: TemplateData[K]) {

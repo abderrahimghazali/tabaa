@@ -10,6 +10,7 @@ import {
   validateForIssue,
   type Company,
   type Invoice,
+  type InvoiceDelivery,
   type InvoiceInput,
   type InvoiceSummary,
   type Party,
@@ -18,7 +19,7 @@ import {
 } from '@facture/core';
 import { Decimal } from 'decimal.js';
 import { and, asc, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
-import { companies, invoices, numberingSequences, parties, payments } from '../db/schema.js';
+import { companies, invoiceDeliveries, invoices, numberingSequences, parties, payments } from '../db/schema.js';
 import { TenantDb } from '../db/tenant-db.js';
 import { conflict, invalid, notFound } from '../common/errors.js';
 import { dto, money, today } from '../common/util.js';
@@ -122,7 +123,7 @@ export class InvoicesService {
     return dto(p) as Payment;
   }
 
-  private build(row: Row, party: typeof parties.$inferSelect, pays: PaymentRow[], liveSeller: Company | null): Invoice {
+  private build(row: Row, party: typeof parties.$inferSelect, pays: PaymentRow[], liveSeller: Company | null, deliveries: InvoiceDelivery[]): Invoice {
     const issued = row.state === 'ISSUED';
     const input = this.inputOf(row);
     const totals = issued ? row.snapshot!.totals : this.totalsOf(input);
@@ -145,6 +146,7 @@ export class InvoicesService {
       seller: issued ? row.snapshot!.seller : liveSeller,
       customer: issued ? row.snapshot!.customer : (dto(party) as Party),
       payments: pays.map((p) => this.paymentDto(p)),
+      deliveries,
     };
   }
 
@@ -158,7 +160,21 @@ export class InvoicesService {
       .where(and(eq(payments.invoiceId, id), isNull(payments.voidedAt)))
       .orderBy(asc(payments.paidOn), asc(payments.createdAt));
     const [companyRow] = row.state === 'DRAFT' ? await this.tx.select().from(companies) : [];
-    return this.build(row, party, pays, companyRow ? (dto(companyRow) as Company) : null);
+    const sent = await this.tx
+      .select()
+      .from(invoiceDeliveries)
+      .where(eq(invoiceDeliveries.invoiceId, id))
+      .orderBy(desc(invoiceDeliveries.sentAt));
+    const deliveries: InvoiceDelivery[] = sent.map((d) => ({
+      id: d.id,
+      kind: d.kind as InvoiceDelivery['kind'],
+      to: d.to,
+      cc: d.cc,
+      subject: d.subject,
+      sentAt: d.sentAt.toISOString(),
+      sentByName: d.sentByName,
+    }));
+    return this.build(row, party, pays, companyRow ? (dto(companyRow) as Company) : null, deliveries);
   }
 
   async summaries(filter: { state?: string; status?: string; q?: string; customerId?: string } = {}, limit?: number) {
@@ -183,6 +199,11 @@ export class InvoicesService {
       .where(isNull(payments.voidedAt))
       .groupBy(payments.invoiceId);
     const paidBy = new Map(sums.map((s) => [s.invoiceId, new Decimal(s.paid)]));
+    const sent = await this.tx
+      .select({ invoiceId: invoiceDeliveries.invoiceId, last: sql<Date>`max(${invoiceDeliveries.sentAt})` })
+      .from(invoiceDeliveries)
+      .groupBy(invoiceDeliveries.invoiceId);
+    const lastSent = new Map(sent.map((d) => [d.invoiceId, new Date(d.last).toISOString()]));
     const out: InvoiceSummary[] = rows.map(({ inv, customerName }) => {
       const paid = paidBy.get(inv.id) ?? new Decimal(0);
       return {
@@ -198,6 +219,7 @@ export class InvoicesService {
         customerName: inv.snapshot?.customer.name ?? customerName,
         totalGross: inv.totalGross,
         amountDue: inv.amountDue,
+        lastSentAt: lastSent.get(inv.id) ?? null,
       };
     });
     const { status } = filter;

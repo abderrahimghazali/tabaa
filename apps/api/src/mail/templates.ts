@@ -1,4 +1,13 @@
+import type { Role } from '@facture/core';
 import { env } from '../env.js';
+
+const ROLE_WORDS: Record<Role, { fr: string; ar: string }> = {
+  OWNER: { fr: 'propriétaire', ar: 'مالك' },
+  ADMIN: { fr: 'administrateur', ar: 'مسؤول' },
+  MEMBER: { fr: 'membre', ar: 'عضو' },
+  ACCOUNTANT: { fr: 'comptable (lecture et export)', ar: 'محاسب (اطلاع وتصدير)' },
+  VIEWER: { fr: 'lecteur (lecture seule)', ar: 'مشاهد (للاطلاع فقط)' },
+};
 
 interface Block {
   title: string;
@@ -44,6 +53,9 @@ export interface TemplateData {
   mfaEnabled: { name: string };
   mfaDisabled: { name: string };
   workspaceClosed: { name: string; workspace: string };
+  invitation: { workspace: string; inviter: string; role: Role; token: string; expiresAt: Date };
+  roleChanged: { name: string; workspace: string; role: Role };
+  memberRemoved: { name: string; workspace: string };
 }
 
 export type TemplateName = keyof TemplateData;
@@ -124,6 +136,34 @@ export const templates: { [K in TemplateName]: (d: TemplateData[K]) => Content }
       title: 'تم إغلاق مساحة العمل',
       lines: [`مرحباً ${name}،`, `تم إغلاق مساحة «${workspace}». حُذفت حسابات المستخدمين والبيانات غير الخاضعة للحفظ القانوني. تُحفظ الفواتير الصادرة مقفلة طوال المدة القانونية ثم تُحذف.`],
     },
+  }),
+  invitation: ({ workspace, inviter, role, token, expiresAt }) => {
+    const url = web(`/invitation?token=${encodeURIComponent(token)}`);
+    const date = expiresAt.toLocaleDateString('fr-FR', { timeZone: 'Africa/Casablanca' });
+    const dateAr = expiresAt.toLocaleDateString('ar-MA-u-nu-latn', { timeZone: 'Africa/Casablanca' });
+    return {
+      subject: 'Invitation à rejoindre un espace Tabaa | دعوة للانضمام إلى مساحة عمل',
+      fr: {
+        title: `Vous êtes invité à rejoindre « ${workspace} »`,
+        lines: [`${inviter} vous invite à rejoindre l’espace « ${workspace} » sur Tabaa, en tant que ${ROLE_WORDS[role].fr}.`, `Ce lien est valable jusqu’au ${date} et ne fonctionne qu’une fois.`, 'Si vous ne connaissez pas cette personne, ignorez ce message.'],
+        action: { label: 'Accepter l’invitation', url },
+      },
+      ar: {
+        title: `تمت دعوتك للانضمام إلى «${workspace}»`,
+        lines: [`يدعوك ${inviter} للانضمام إلى مساحة «${workspace}» في طباعة بصفة ${ROLE_WORDS[role].ar}.`, `الرابط صالح حتى ${dateAr} ويُستعمل مرة واحدة فقط.`, 'إذا كنت لا تعرف هذا الشخص، تجاهل هذه الرسالة.'],
+        action: { label: 'قبول الدعوة', url },
+      },
+    };
+  },
+  roleChanged: ({ name, workspace, role }) => ({
+    subject: 'Votre rôle a changé | تم تغيير دورك',
+    fr: { title: 'Votre rôle a changé', lines: [`Bonjour ${name},`, `Dans l’espace « ${workspace} », vous êtes maintenant ${ROLE_WORDS[role].fr}.`] },
+    ar: { title: 'تم تغيير دورك', lines: [`مرحباً ${name}،`, `في مساحة «${workspace}»، أصبحت الآن بصفة ${ROLE_WORDS[role].ar}.`] },
+  }),
+  memberRemoved: ({ name, workspace }) => ({
+    subject: 'Accès retiré | تم سحب الوصول',
+    fr: { title: 'Votre accès a été retiré', lines: [`Bonjour ${name},`, `Vous n’avez plus accès à l’espace « ${workspace} ». Votre compte et vos autres espaces ne sont pas affectés.`] },
+    ar: { title: 'تم سحب وصولك', lines: [`مرحباً ${name}،`, `لم يعد بإمكانك الوصول إلى مساحة «${workspace}». حسابك ومساحاتك الأخرى لا تتأثر.`] },
   }),
 };
 

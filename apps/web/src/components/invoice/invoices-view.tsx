@@ -11,6 +11,8 @@ import {
   RiFileList3Line,
   RiFileReduceLine,
   RiMore2Fill,
+  RiMailCheckLine,
+  RiMailSendLine,
   RiMoneyDollarCircleLine,
   RiSendPlaneLine,
 } from "@remixicon/react";
@@ -21,6 +23,8 @@ import { Chip } from "@/components/base/badges/chip";
 import { Button, ButtonLink } from "@/components/base/buttons/button";
 import { Dropdown, DropdownGroup, DropdownItem, DropdownPopover, DropdownTrigger } from "@/components/base/dropdown/dropdown";
 import { AlertDialog } from "@/components/base/modal/modal";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
+import { Button as AriaButton } from "react-aria-components";
 import { Pagination } from "@/components/base/pagination/pagination";
 import { SearchField } from "@/components/base/search-field/search-field";
 import { Tab, TabList, Tabs } from "@/components/base/tabs/tabs";
@@ -30,9 +34,11 @@ import { NameAvatar } from "@/components/app/name-avatar";
 import { Money } from "@/components/app/money";
 import { createCreditNote, issueInvoice } from "@/lib/actions";
 import { openPdf } from "./pdf-download";
+import { useSendDialog, type SendTarget } from "./send-dialog";
 import { daysBetween, fmtDate, sub } from "@/lib/format";
 import { useI18n } from "@/lib/i18n-client";
-import { useCanWrite } from "@/lib/me-client";
+import { useStamp } from "@/lib/use-stamp";
+import { useCan, useCanWrite } from "@/lib/me-client";
 import { TABS, type Tab as TabKey } from "@/lib/invoice-tabs";
 import { statusOf, type StatusKey } from "@/lib/status";
 import { cx } from "@/utils/cx";
@@ -42,6 +48,7 @@ import { EmptyState, MobileFilters, FilterSelect, ListCard, ListToolbar, RouterB
 const PAGE = 10;
 const PERIODS = ["month", "d30", "quarter", "year"] as const;
 const STATUSES = ["draft", "issued", "partial", "paid", "overdue", "credit"] as const;
+const UNSENT = "unsent";
 
 type Row = InvoiceSummary & { remaining: string; open: boolean };
 
@@ -54,12 +61,42 @@ const tabFilters: Record<TabKey, (i: InvoiceSummary) => boolean> = {
   paid: (i) => i.state === "ISSUED" && i.paymentStatus === "PAID",
 };
 
-function RowMenu({ inv, onIssue, onCredit }: { inv: Row; onIssue: () => void; onCredit: () => void }) {
+const sendTarget = (inv: Row, customerId?: string): SendTarget => ({
+  id: inv.id,
+  number: inv.number,
+  isCredit: inv.type === "CREDIT_NOTE",
+  customerId,
+  remindable: inv.open,
+  overdue: inv.overdue,
+});
+
+function SentMark({ at }: { at: string | null }) {
+  const { t } = useI18n();
+  const stamp = useStamp();
+  const [open, setOpen] = useState(false);
+  if (!at) return null;
+  const label = t("send.indicator", { date: stamp(at) });
+  return (
+    <TooltipTrigger delay={200} isOpen={open} onOpenChange={setOpen}>
+      <AriaButton
+        aria-label={label}
+        onPress={() => setOpen((o) => !o)}
+        className="relative z-10 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-foreground-icon-secondary outline-none hover:text-foreground-icon-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring max-nav:size-8"
+      >
+        <RiMailCheckLine className="size-[18px]" aria-hidden />
+      </AriaButton>
+      <Tooltip size="md"><span className="num">{label}</span></Tooltip>
+    </TooltipTrigger>
+  );
+}
+
+function RowMenu({ inv, onIssue, onCredit, onSend }: { inv: Row; onIssue: () => void; onCredit: () => void; onSend: () => void }) {
   const { t } = useI18n();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const draft = inv.state === "DRAFT";
   const canWrite = useCanWrite();
+  const canSend = useCan("send") && !draft;
   const go = (href: string) => {
     setOpen(false);
     router.push(href);
@@ -93,6 +130,11 @@ function RowMenu({ inv, onIssue, onCredit }: { inv: Row; onIssue: () => void; on
           {draft && canWrite && (
             <DropdownItem onSelect={() => { setOpen(false); onIssue(); }}>
               <span className={row}><RiSendPlaneLine className={icon} aria-hidden />{t("invoice.issue")}</span>
+            </DropdownItem>
+          )}
+          {canSend && (
+            <DropdownItem onSelect={() => { setOpen(false); onSend(); }}>
+              <span className={row}><RiMailSendLine className={icon} aria-hidden />{inv.lastSentAt ? (inv.open && inv.overdue ? t("send.remind") : t("send.resend")) : t("send.button")}</span>
             </DropdownItem>
           )}
           {inv.open && canWrite && (
@@ -133,12 +175,14 @@ export function InvoicesView({
   initialTab = "all",
   initialQuery = "",
   hideCustomer,
+  customerId,
 }: {
   invoices: InvoiceSummary[];
   today: string;
   initialTab?: TabKey;
   initialQuery?: string;
   hideCustomer?: boolean;
+  customerId?: string;
 }) {
   const { t, locale } = useI18n();
   const router = useRouter();
@@ -150,6 +194,8 @@ export function InvoicesView({
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: PAGE });
   const [confirm, setConfirm] = useState<{ kind: "issue" | "credit"; id: string } | null>(null);
+  const send = useSendDialog();
+  const openSend = send.open;
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
   const set = <T,>(fn: (v: T) => void) => (v: T) => {
@@ -165,7 +211,9 @@ export function InvoicesView({
     return invoices
       .filter((i) => {
         if (!tabFilters[tab](i)) return false;
-        if (status !== "all" && statusOf(i) !== (status as StatusKey)) return false;
+        if (status === UNSENT) {
+          if (i.state !== "ISSUED" || i.lastSentAt) return false;
+        } else if (status !== "all" && statusOf(i) !== (status as StatusKey)) return false;
         if (customer !== "all" && i.customerName !== customer) return false;
         if (period !== "all") {
           const age = daysBetween(today, i.issueDate);
@@ -239,19 +287,29 @@ export function InvoicesView({
             <span className="text-text-tertiary">—</span>
           ),
       },
-      { id: "status", enableSorting: false, header: t("col.status"), cell: ({ row }) => <StatusChip inv={row.original} t={t} /> },
+      {
+        id: "status",
+        enableSorting: false,
+        header: t("col.status"),
+        cell: ({ row }) => (
+          <div className="flex items-center gap-1.5">
+            <StatusChip inv={row.original} t={t} />
+            <SentMark at={row.original.lastSentAt} />
+          </div>
+        ),
+      },
       {
         id: "actions",
         enableSorting: false,
         header: () => <span className="sr-only">{t("common.actions")}</span>,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <RowMenu inv={row.original} onIssue={() => setConfirm({ kind: "issue", id: row.original.id })} onCredit={() => setConfirm({ kind: "credit", id: row.original.id })} />
+            <RowMenu inv={row.original} onIssue={() => setConfirm({ kind: "issue", id: row.original.id })} onCredit={() => setConfirm({ kind: "credit", id: row.original.id })} onSend={() => openSend(sendTarget(row.original, customerId))} />
           </div>
         ),
       },
     ],
-    [t, locale, today, hideCustomer],
+    [t, locale, today, hideCustomer, customerId, openSend],
   );
 
   const table = useReactTable({
@@ -293,7 +351,7 @@ export function InvoicesView({
     }
   };
 
-  const statusOptions = [{ key: "all", label: t("lists.allStatuses") }, ...STATUSES.map((k) => ({ key: k, label: t(`status.${k}`) }))];
+  const statusOptions = [{ key: "all", label: t("lists.allStatuses") }, ...STATUSES.map((k) => ({ key: k, label: t(`status.${k}`) })), { key: UNSENT, label: t("status.unsent") }];
   const customerOptions = [{ key: "all", label: t("lists.allCustomers") }, ...customers.map((c) => ({ key: c, label: c }))];
   const periodOptions = [{ key: "all", label: t("lists.allPeriods") }, ...PERIODS.map((k) => ({ key: k, label: t(`period.${k}`) }))];
 
@@ -389,12 +447,15 @@ export function InvoicesView({
                         {!hideCustomer && <div className="ident text-caption-1-regular text-text-tertiary">{inv.number ?? <span className="font-sans">{t("invoices.noNumber")}</span>}</div>}
                       </div>
                       <div className="relative z-10">
-                        <RowMenu inv={inv} onIssue={() => setConfirm({ kind: "issue", id: inv.id })} onCredit={() => setConfirm({ kind: "credit", id: inv.id })} />
+                        <RowMenu inv={inv} onIssue={() => setConfirm({ kind: "issue", id: inv.id })} onCredit={() => setConfirm({ kind: "credit", id: inv.id })} onSend={() => send.open(sendTarget(inv, customerId))} />
                       </div>
                     </div>
                     <div className="flex flex-wrap items-end justify-between gap-3">
                       <div className="flex flex-col items-start gap-1.5">
-                        <StatusChip inv={inv} t={t} />
+                        <div className="flex items-center gap-1">
+                          <StatusChip inv={inv} t={t} />
+                          <SentMark at={inv.lastSentAt} />
+                        </div>
                         {inv.state !== "DRAFT" && inv.open && <DueCell dueDate={inv.dueDate} today={today} open t={t} locale={locale} />}
                       </div>
                       <div className="text-end">
@@ -427,6 +488,7 @@ export function InvoicesView({
         )}
       </ListCard>
 
+      {send.dialog}
       <AlertDialog
         isOpen={!!confirm}
         onOpenChange={(o) => !o && setConfirm(null)}

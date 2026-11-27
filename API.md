@@ -69,6 +69,51 @@ Outgoing email goes through SMTP (`SMTP_URL`, `MAIL_FROM`). In development it la
 - Rate-limit counters use Redis when `REDIS_URL` is set (required when `NODE_ENV=production`), otherwise process memory.
 - Demo accounts created by the seed, all with the demo password: `demo@tabaa.ma` (OWNER), `membre@tabaa.ma` (MEMBER), `lecteur@tabaa.ma` (VIEWER).
 
+## Sending invoices by email
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| GET | `/invoices/:id/send-preview?kind=` | | `SendInvoicePreview` | Default recipient (the customer's email, if any), subject and message for `INVOICE` or `REMINDER`, in the invoice's language |
+| POST | `/invoices/:id/send` | `SendInvoiceInput` | `Invoice` | Issued invoices and credit notes only (409 for drafts). Requires the stored PDF: 409 `PDF_NOT_GENERATED` if none (the web server generates it first). `REMINDER` only when something remains due |
+
+- The email carries the stored PDF, and the UBL file when `attachUbl` is true. `From` is the platform address with the company name as display name; `Reply-To` is the company's email when set. French, with Arabic beneath when the invoice language includes Arabic. No tracking pixel, no remote images.
+- Each send is recorded (`Invoice.deliveries`, `InvoiceSummary.lastSentAt`) and audited as `invoice.sent` or `invoice.reminder_sent`.
+- Limits per workspace: 200 emails per day and 20 per hour (429 `SEND_LIMIT`), so an account cannot be used to send bulk mail. Recipients beyond 5 are rejected by the schema.
+- Allowed roles: OWNER, ADMIN, MEMBER.
+
+## Team, roles and workspaces
+
+A user can belong to several workspaces (an accountant with several clients). The session has one active workspace.
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| GET | `/team` | | `Team` | Members and pending invitations. OWNER and ADMIN see invitations; others get `invitations: []` |
+| POST | `/team/invitations` | `InviteInput` | `Invitation` | OWNER, ADMIN. Only an OWNER may invite an OWNER. Emails a link `WEB_URL/invitation?token=…` valid 7 days, single use. 409 `ALREADY_MEMBER`, 409 `ALREADY_INVITED` (resend instead), 429 `INVITE_LIMIT` (30 invitations per workspace per day) |
+| POST | `/team/invitations/:id/resend` | | `Invitation` | New token and expiry; the previous link stops working |
+| DELETE | `/team/invitations/:id` | | 204 | |
+| PATCH | `/team/members/:userId` | `ChangeRoleInput` | `TeamMember` | OWNER, ADMIN. Only an OWNER may grant or remove OWNER. The last OWNER cannot be demoted (409 `LAST_OWNER`). An ADMIN cannot change an OWNER |
+| DELETE | `/team/members/:userId` | | 204 | Removes the membership and revokes that user's sessions on this workspace. The last OWNER cannot be removed. A member may remove themself (leave) |
+| GET | `/auth/invitations/:token` | | `InvitationPreview` | Public. 404 `INVALID_TOKEN` when unknown, used or expired |
+| POST | `/auth/invitations/accept` | `AcceptInvitationInput` | `Me` + cookie | No account for that email: `name` and `password` required, the account is created (email counts as verified) and signed in. Account exists: the caller must be signed in as that email (401 `SIGN_IN_REQUIRED` otherwise); the membership is added and the session switches to the new workspace |
+| POST | `/auth/switch-tenant` | `SwitchTenantInput` | `Me` | Switches the active workspace of the current session. 403 if not a member |
+
+Permissions:
+
+| | OWNER | ADMIN | MEMBER | ACCOUNTANT | VIEWER |
+|---|---|---|---|---|---|
+| Read everything, PDF, UBL | yes | yes | yes | yes | yes |
+| Create, edit, issue invoices; record payments; customers and items | yes | yes | yes | no | no |
+| Send invoices by email | yes | yes | yes | no | no |
+| Void payments, delete records, company settings | yes | yes | no | no | no |
+| Activity log | yes | yes | no | yes | no |
+| Data export | yes | no | no | yes | no |
+| Manage team | yes | yes (not owners) | no | no | no |
+| Close workspace | yes | no | no | no | no |
+
+- `Me.memberships` lists every workspace of the user; `Me.tenant` and `Me.role` are the active one.
+- Closing a workspace deletes only the user accounts that belong to no other workspace; other members just lose that membership.
+- Team changes are audited (`team.invited`, `team.invitation_revoked`, `team.joined`, `team.role_changed`, `team.member_removed`) and the person concerned receives an email (invited, role changed, removed).
+
 ## Invoice PDF
 
 The web server renders the PDF from the same invoice sheet users see (headless Chromium), then stores the file of an issued invoice through the API so it never changes afterwards.

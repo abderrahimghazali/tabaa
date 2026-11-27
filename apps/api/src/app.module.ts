@@ -13,6 +13,7 @@ import { MailModule } from './mail/mail.module.js';
 import { clock } from './common/clock.js';
 import { RedisThrottlerStorage } from './common/redis-throttler.storage.js';
 import { RetentionModule } from './retention/retention.module.js';
+import { TeamModule } from './team/team.module.js';
 import { TenantModule } from './tenant/tenant.module.js';
 import { ExportModule } from './export/export.module.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -63,6 +64,7 @@ import { PartiesModule } from './parties/parties.module.js';
     AuditModule,
     ExportModule,
     TenantModule,
+    TeamModule,
     RetentionModule,
   ],
   providers: [

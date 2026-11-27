@@ -20,7 +20,7 @@ export class ExportController {
   ) {}
 
   @Get()
-  @Roles('OWNER')
+  @Roles('OWNER', 'ACCOUNTANT')
   @Audited({ action: 'tenant.exported', entity: 'tenant', idFrom: 'result', summary: () => 'Export complet des données' })
   async export() {
     const summaries = await this.invoices.summaries();

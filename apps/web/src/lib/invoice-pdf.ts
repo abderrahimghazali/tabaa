@@ -1,5 +1,5 @@
 import "server-only";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { ApiError } from "@facture/core";
 import { apiRoot, upstreamHeaders } from "./upstream";
 import { SESSION_COOKIE } from "./session";
@@ -57,4 +57,14 @@ export async function issuedPdf(id: string, requestUrl: string): Promise<StoredP
 
 export async function draftPdf(id: string, requestUrl: string): Promise<StoredPdf> {
   return { bytes: await render(id, requestUrl), etag: null };
+}
+
+/**
+ * Makes sure an issued invoice's PDF is stored before it is emailed.
+ * Server actions have no request URL: only the port of the Host header is used (the host itself never is; see selfOrigin).
+ */
+export async function ensureStoredPdf(id: string): Promise<void> {
+  const host = (await headers()).get("host") ?? "";
+  const port = /:(\d{1,5})$/.exec(host)?.[1];
+  await issuedPdf(id, `http://localhost${port ? `:${port}` : ""}/`);
 }

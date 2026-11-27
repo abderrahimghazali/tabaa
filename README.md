@@ -193,7 +193,7 @@ pnpm --filter web pdf:install   # navigateur Chromium pour la génération des P
 pnpm dev                        # interface sur http://localhost:3100, API sur http://localhost:4100
 ```
 
-Comptes de démonstration créés par le jeu de données, mot de passe `tabaa-demo-2026` : `demo@tabaa.ma` (propriétaire), `membre@tabaa.ma` (membre), `lecteur@tabaa.ma` (lecture seule).
+Comptes de démonstration créés par le jeu de données, mot de passe `tabaa-demo-2026` : `demo@tabaa.ma` (propriétaire), `membre@tabaa.ma` (membre), `comptable@tabaa.ma` (expert-comptable), `lecteur@tabaa.ma` (lecture seule).
 
 En développement, tous les e-mails envoyés (vérification, réinitialisation, alertes) arrivent dans la boîte locale : http://localhost:8125.
 
@@ -238,9 +238,9 @@ gantt
     Factures, avoirs, numérotation, UBL      :done, 2026-11-24, 3d
     Encaissements, tableau de bord, PDF      :done, 2026-11-24, 3d
     Comptes, double authentification, journal :done, 2026-11-24, 3d
+    Envoi par e-mail, relances               :done, 2026-11-27, 1d
+    Équipe, rôles, accès expert-comptable    :done, 2026-11-27, 1d
     section Ensuite
-    Envoi de la facture au client par e-mail :2026-12-01, 3w
-    Équipe, rôles, accès expert-comptable    :2026-12-15, 3w
     Import bancaire et rapprochement         :2027-01-05, 5w
     TVA, retenue à la source, relevés        :2027-01-26, 6w
     Délais de paiement, loi 69-21            :2027-02-16, 5w

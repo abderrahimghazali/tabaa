@@ -2,6 +2,7 @@
 
 import { createContext, useContext } from "react";
 import type { Me } from "@facture/core";
+import { can, type Capability } from "./permissions";
 
 const MeCtx = createContext<Me | null>(null);
 
@@ -10,10 +11,8 @@ export function MeProvider({ me, children }: { me: Me; children: React.ReactNode
 }
 
 export const useMe = () => useContext(MeCtx);
-/** VIEWER accounts are read-only; the API enforces it too. */
-export const useCanWrite = () => useContext(MeCtx)?.role !== "VIEWER";
+export const useCan = (capability: Capability) => can(useContext(MeCtx)?.role, capability);
+/** Create, edit, issue, record payments, customers and items. VIEWER and ACCOUNTANT are read-only. */
+export const useCanWrite = () => useCan("write");
 /** OWNER and ADMIN may change the company, delete records and void payments. */
-export const useCanAdmin = () => {
-  const role = useContext(MeCtx)?.role;
-  return role === "OWNER" || role === "ADMIN";
-};
+export const useCanAdmin = () => useCan("admin");

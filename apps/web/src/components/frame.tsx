@@ -41,6 +41,7 @@ const SEGMENTS: Record<string, Key> = {
   parametres: "nav.settings",
   compte: "settings.account",
   securite: "settings.security",
+  equipe: "settings.team",
   entreprise: "settings.company",
   facturation: "settings.invoicing",
   preferences: "settings.preferences",
@@ -143,9 +144,9 @@ export function Frame({ me, drafts, overdue, children }: { me: Me; drafts: numbe
             </header>
             <Topbar />
             <main className="mx-auto max-w-[1280px] px-4 pt-1 pb-28 sm:px-6 nav:px-8 nav:pt-2 nav:pb-16">
-              {me.role === "VIEWER" && (
+              {(me.role === "VIEWER" || me.role === "ACCOUNTANT") && (
                 <p role="status" className="mb-4 rounded-xl bg-status-blue-background px-3 py-2.5 text-body-medium text-status-blue-text">
-                  {t("role.viewerNote")}
+                  {t("role.readOnlyNote", { role: t(`role.${me.role}`) })}
                 </p>
               )}
               {children}

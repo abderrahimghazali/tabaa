@@ -2,7 +2,7 @@
 
 import { useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import Link from "next/link";
-import { RiBuilding2Line, RiCheckLine, RiEqualizer3Line, RiLogoutBoxRLine, RiUserLine } from "@remixicon/react";
+import { RiBuilding2Line, RiCheckLine, RiTeamLine, RiEqualizer3Line, RiLogoutBoxRLine, RiUserLine } from "@remixicon/react";
 import type { Me } from "@facture/core";
 import {
   Button as AriaButton,
@@ -14,7 +14,8 @@ import { Avatar } from "@/components/base/avatar/avatar";
 import { ChevronDownSmall } from "@/components/foundations/icons/chevrons";
 import { useDirection } from "@/components/foundations/direction/direction";
 import { setLocale } from "@/lib/actions";
-import { signOut } from "@/lib/auth-actions";
+import { signOut, switchWorkspace } from "@/lib/auth-actions";
+import { toast } from "@/components/base/toast/toast";
 import type { Locale } from "@/lib/format";
 import { useI18n } from "@/lib/i18n-client";
 import { cx } from "@/utils/cx";
@@ -56,6 +57,23 @@ export function DashboardAccountMenu({
   const name = me.user.name;
   const initials = name.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   const close = () => setIsOpen(false);
+  const [switching, setSwitching] = useState<string | null>(null);
+  const many = me.memberships.length > 1;
+
+  const switchTo = async (tenantId: string) => {
+    if (switching) return;
+    if (tenantId === me.tenant.id) return close();
+    setSwitching(tenantId);
+    const res = await switchWorkspace(tenantId);
+    if (!res.ok) {
+      setSwitching(null);
+      toast.error(t("ws.switchFailed"));
+      return;
+    }
+    // A full load, not a client navigation: nothing from the previous workspace may survive in memory.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/");
+  };
 
   const pick = (next: Locale) => {
     if (next === locale) return;
@@ -115,6 +133,37 @@ export function DashboardAccountMenu({
       >
         <AriaDialog aria-label={t("account.menu")} className="flex flex-col gap-1.5 outline-none">
           <div className="flex w-full items-center gap-2 px-2 pt-1 pb-1">{identity}</div>
+          {many && (
+            <>
+              <div className="-mx-2.5 my-1 h-px bg-border-button-default" />
+              <span className="px-2 text-body-medium text-text-secondary">{t("ws.switch")}</span>
+              <ul className="flex flex-col gap-0.5" aria-label={t("ws.switch")}>
+                {me.memberships.map((m) => {
+                  const active = m.tenantId === me.tenant.id;
+                  return (
+                    <li key={m.tenantId}>
+                      <AriaButton
+                        onPress={() => void switchTo(m.tenantId)}
+                        isDisabled={!!switching}
+                        aria-current={active ? "true" : undefined}
+                        className={cx(rowClass, "justify-between", switching && !active && switching !== m.tenantId && "opacity-60")}
+                      >
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <RiTeamLine className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+                          <span className="flex min-w-0 flex-col">
+                            <span dir="auto" className="truncate text-body-medium text-text-primary">{m.tenantName}</span>
+                            <span className="truncate text-caption-1-regular text-text-secondary">{t(`role.${m.role}`)}</span>
+                          </span>
+                        </span>
+                        {active && <RiCheckLine className="size-5 shrink-0 text-accent-600" aria-hidden />}
+                        {switching === m.tenantId && <span role="status" className="sr-only">{t("auth.pending")}</span>}
+                      </AriaButton>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
           <div className="-mx-2.5 my-1 h-px bg-border-button-default" />
           <MenuLink href="/parametres/entreprise" icon={RiBuilding2Line} onSelect={close}>{t("company.settings")}</MenuLink>
           <MenuLink href="/parametres/compte" icon={RiUserLine} onSelect={close}>{t("settings.account")}</MenuLink>

@@ -39,6 +39,6 @@ export class RolesGuard implements CanActivate {
 
 export const Roles = (...roles: Role[]) => applyDecorators(SetMetadata(ROLES, roles), UseGuards(RolesGuard));
 
-// For system-side stores of read artefacts (e.g. the invoice PDF): any role may trigger them.
+// Lets read-only roles (VIEWER, ACCOUNTANT) call a non-GET route: system-side stores (invoice PDF), their own session, leaving a workspace.
 export const ALLOW_VIEWER = 'allowViewer';
 export const AllowViewer = () => SetMetadata(ALLOW_VIEWER, true);

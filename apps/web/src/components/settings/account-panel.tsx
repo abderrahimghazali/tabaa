@@ -6,6 +6,7 @@ import { Button } from "@/components/base/buttons/button";
 import { closeWorkspace } from "@/lib/auth-actions";
 import { useI18n } from "@/lib/i18n-client";
 import { useMe } from "@/lib/me-client";
+import { can } from "@/lib/permissions";
 import { SensitiveDialog } from "./sensitive-dialog";
 import { Section } from "./section";
 
@@ -17,7 +18,7 @@ export function AccountPanel() {
   const rows: [string, React.ReactNode][] = [
     [t("account.name"), me.user.name],
     [t("account.email"), <span key="e" dir="ltr" className="inline-block">{me.user.email}</span>],
-    [t("account.role"), <Chip key="r" color={me.role === "VIEWER" ? "gray" : "blue"} variant="caption">{t(`role.${me.role}`)}</Chip>],
+    [t("account.role"), <Chip key="r" color={can(me.role, "write") ? "blue" : "gray"} variant="caption">{t(`role.${me.role}`)}</Chip>],
     [t("account.workspace"), me.tenant.name],
   ];
   return (
@@ -34,7 +35,21 @@ export function AccountPanel() {
         <p className="text-body-regular text-text-tertiary sm:col-span-2">{t("account.readOnly")}</p>
       </Section>
 
-      {me.role === "OWNER" && (
+      <Section title={t("ws.list")} description={me.memberships.length > 1 ? t("ws.listHint") : undefined}>
+        <ul className="grid gap-2 sm:col-span-2">
+          {me.memberships.map((m) => (
+            <li key={m.tenantId} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-2xl bg-background-secondary-default px-4 py-3">
+              <span dir="auto" className="min-w-0 break-words text-body-medium text-text-primary">{m.tenantName}</span>
+              <span className="flex items-center gap-2">
+                {m.tenantId === me.tenant.id && <Chip color="lime" variant="caption">{t("ws.active")}</Chip>}
+                <Chip color={can(m.role, "write") ? "blue" : "gray"} variant="caption">{t(`role.${m.role}`)}</Chip>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      {can(me.role, "close") && (
         <div className="rounded-3xl border border-border-error-default bg-background-primary-default p-5 sm:p-6">
           <h2 className="text-headline-medium text-text-error-primary">{t("close.zone")}</h2>
           <div className="mt-3 flex flex-col items-start gap-3">

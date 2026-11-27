@@ -191,6 +191,7 @@ export const memberships = pgTable(
       .notNull()
       .references(() => tenants.id, { onDelete: 'cascade' }),
     role: text('role').notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
@@ -323,4 +324,50 @@ export const invoicePdfs = pgTable(
     createdBy: uuid('created_by'),
   },
   (t) => [uniqueIndex('invoice_pdfs_invoice_uq').on(t.invoiceId)],
+);
+
+export const invoiceDeliveries = pgTable(
+  'invoice_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id),
+    kind: text('kind').notNull(),
+    to: text('to').array().notNull(),
+    cc: text('cc').array().notNull(),
+    subject: text('subject').notNull(),
+    message: text('message').notNull(),
+    attachUbl: boolean('attach_ubl').notNull(),
+    sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+    sentBy: uuid('sent_by'),
+    sentByName: text('sent_by_name'),
+  },
+  (t) => [index('invoice_deliveries_invoice_idx').on(t.invoiceId), index('invoice_deliveries_tenant_sent_idx').on(t.tenantId, t.sentAt)],
+);
+
+export const invitations = pgTable(
+  'invitations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    email: text('email').notNull(),
+    role: text('role').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    invitedBy: uuid('invited_by'),
+    invitedByName: text('invited_by_name'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('invitations_open_uq')
+      .on(t.tenantId, t.email)
+      .where(sql`${t.acceptedAt} is null and ${t.revokedAt} is null`),
+    index('invitations_tenant_idx').on(t.tenantId, t.createdAt),
+  ],
 );

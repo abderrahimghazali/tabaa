@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { RiDownload2Line, RiLogoutBoxRLine } from "@remixicon/react";
-import type { AuditEvent } from "@facture/core";
+import type { AuditEvent, Role } from "@facture/core";
 import { Button, ButtonLink } from "@/components/base/buttons/button";
 import { AlertDialog, ModalTrigger } from "@/components/base/modal/modal";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from "@/components/base/table/table";
@@ -10,6 +10,7 @@ import { toast } from "@/components/base/toast/toast";
 import { loadAuditEvents } from "@/lib/actions";
 import { signOutAll } from "@/lib/auth-actions";
 import { useI18n } from "@/lib/i18n-client";
+import { can } from "@/lib/permissions";
 import type { Key } from "@/lib/i18n";
 import { MfaSection } from "./mfa-section";
 import { Section } from "./section";
@@ -28,7 +29,7 @@ export function SecurityPanel({
   initialEvents,
   auditFailed,
 }: {
-  role: string;
+  role: Role;
   initialEvents: AuditEvent[];
   auditFailed?: boolean;
 }) {
@@ -36,7 +37,7 @@ export function SecurityPanel({
   const [events, setEvents] = useState(initialEvents);
   const [more, setMore] = useState(initialEvents.length >= PAGE);
   const [pending, start] = useTransition();
-  const admin = role === "OWNER" || role === "ADMIN";
+  const canAudit = can(role, "auditLog");
 
   const label = (code: string) => {
     const key = `audit.${code}` as Key;
@@ -81,7 +82,7 @@ export function SecurityPanel({
 
       <MfaSection />
 
-      {role === "OWNER" && (
+      {can(role, "export") && (
         <Section title={t("security.exportTitle")} description={t("security.exportBody")}>
           <div className="sm:col-span-2">
             <ButtonLink variant="secondary" href="/parametres/securite/export" download leadingIcon={RiDownload2Line}>
@@ -91,7 +92,7 @@ export function SecurityPanel({
         </Section>
       )}
 
-      {admin && (
+      {canAudit && (
         <Section title={t("security.auditTitle")} description={t("security.auditBody")}>
           <div className="sm:col-span-2">
             {auditFailed ? (

@@ -16,6 +16,15 @@ import {
   type Party,
   type PartyInput,
   type PaymentInput,
+  type DeliveryKind,
+  type SendInvoiceInput,
+  type SendInvoicePreview,
+  type Team,
+  type Invitation,
+  type InviteInput,
+  type TeamMember,
+  type InvitationPreview,
+  type Role,
 } from "@facture/core";
 
 const BASE = `${apiRoot()}/v1`;
@@ -100,6 +109,20 @@ export const api = {
     if (!res.ok) throw new ApiFailure(res.status, { code: "UBL", message: `HTTP ${res.status}` });
     return res.text();
   },
+
+  sendPreview: (id: string, kind: DeliveryKind) =>
+    call<SendInvoicePreview>(`/invoices/${seg(id)}/send-preview${qs({ kind })}`),
+  sendInvoice: (id: string, input: SendInvoiceInput) =>
+    call<Invoice>(`/invoices/${seg(id)}/send`, { method: "POST", body: body(input) }),
+
+  team: () => call<Team>("/team"),
+  invite: (input: InviteInput) => call<Invitation>("/team/invitations", { method: "POST", body: body(input) }),
+  resendInvitation: (id: string) => call<Invitation>(`/team/invitations/${seg(id)}/resend`, { method: "POST" }),
+  revokeInvitation: (id: string) => call<void>(`/team/invitations/${seg(id)}`, { method: "DELETE" }),
+  changeRole: (userId: string, role: Role) =>
+    call<TeamMember>(`/team/members/${seg(userId)}`, { method: "PATCH", body: body({ role }) }),
+  removeMember: (userId: string) => call<void>(`/team/members/${seg(userId)}`, { method: "DELETE" }),
+  invitationPreview: (token: string) => call<InvitationPreview>(`/auth/invitations/${seg(token)}`),
 
   dashboard: () => call<Dashboard>("/dashboard"),
 

@@ -8,22 +8,15 @@ import {
   type PasswordResetLink,
 } from '@nestjs/authentication';
 import type { Me, Role } from '@facture/core';
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { AuditService } from '../audit/audit.service.js';
 import { ApiException } from '../common/errors.js';
-import { memberships, mfaAuthenticators, mfaChallenges, pendingSignups, tenants, users } from '../db/schema.js';
+import { memberships, mfaAuthenticators, mfaChallenges, pendingSignups, sessions, tenants, users } from '../db/schema.js';
 import { MailService } from '../mail/mail.service.js';
 import { AuthDb } from './auth-db.js';
 import type { AuthUser } from './auth-types.js';
 
 export const normalizeEmail = (email: string) => email.trim().normalize('NFC').toLowerCase();
-
-export const toMe = (u: AuthUser): Me => ({
-  user: { id: u.id, name: u.name, email: u.email },
-  tenant: { id: u.tenantId, name: u.tenantName },
-  role: u.role,
-  mfaEnabled: u.mfaEnabled,
-});
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const newToken = () => randomBytes(32).toString('base64url');
@@ -79,6 +72,14 @@ export class AuthService {
     }
   }
 
+  async createTenant(input: { name: string; id?: string }) {
+    await this.authDb.db.insert(tenants).values({ ...(input.id && { id: input.id }), name: input.name });
+  }
+
+  async addMembership(userId: string, tenantId: string, role: Role) {
+    await this.authDb.db.insert(memberships).values({ userId, tenantId, role });
+  }
+
   async addMember(input: { name: string; email: string; passwordHash: string; tenantId: string; role: Role }) {
     const [user] = await this.authDb.db
       .insert(users)
@@ -126,11 +127,13 @@ export class AuthService {
         passwordHash: pending.passwordHash,
         tenantName: pending.companyName,
       });
+      await this.touchMembership(userId, tenantId);
       return {
         user: { id: userId, name: pending.name, email: pending.email },
         tenant: { id: tenantId, name: pending.companyName },
         role: 'OWNER',
         mfaEnabled: false,
+        memberships: [{ tenantId, tenantName: pending.companyName, role: 'OWNER' }],
       };
     } catch (err) {
       if (err instanceof ApiException) return null;
@@ -138,7 +141,8 @@ export class AuthService {
     }
   }
 
-  async membershipOf(userId: string) {
+  // The workspace to sign in to: the one asked for, else the most recently used, else the oldest.
+  async membershipOf(userId: string, tenantId?: string) {
     const [row] = await this.authDb.db
       .select({
         tenantId: memberships.tenantId,
@@ -152,10 +156,42 @@ export class AuthService {
       .innerJoin(tenants, eq(tenants.id, memberships.tenantId))
       .innerJoin(users, eq(users.id, memberships.userId))
       .leftJoin(mfaAuthenticators, eq(mfaAuthenticators.userId, memberships.userId))
-      .where(eq(memberships.userId, userId))
-      .orderBy(asc(memberships.createdAt))
+      .where(and(eq(memberships.userId, userId), isNull(tenants.closedAt), tenantId ? eq(memberships.tenantId, tenantId) : undefined))
+      .orderBy(sql`${memberships.lastUsedAt} desc nulls last`, asc(memberships.createdAt))
       .limit(1);
     return row ?? null;
+  }
+
+  async meFor(userId: string, tenantId?: string): Promise<Me | null> {
+    const m = await this.membershipOf(userId, tenantId);
+    if (!m) return null;
+    const all = await this.authDb.db
+      .select({ tenantId: memberships.tenantId, tenantName: tenants.name, role: memberships.role })
+      .from(memberships)
+      .innerJoin(tenants, eq(tenants.id, memberships.tenantId))
+      .where(and(eq(memberships.userId, userId), isNull(tenants.closedAt)))
+      .orderBy(asc(memberships.createdAt));
+    return {
+      user: { id: userId, name: m.name, email: m.email },
+      tenant: { id: m.tenantId, name: m.tenantName },
+      role: m.role as Role,
+      mfaEnabled: m.mfa === true,
+      memberships: all.map((a) => ({ ...a, role: a.role as Role })),
+    };
+  }
+
+  async touchMembership(userId: string, tenantId: string) {
+    await this.authDb.db
+      .update(memberships)
+      .set({ lastUsedAt: new Date() })
+      .where(and(eq(memberships.userId, userId), eq(memberships.tenantId, tenantId)));
+  }
+
+  async switchTenant(sessionId: string, userId: string, tenantId: string): Promise<boolean> {
+    if (!(await this.membershipOf(userId, tenantId))) return false;
+    await this.authDb.db.update(sessions).set({ tenantId }).where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId)));
+    await this.touchMembership(userId, tenantId);
+    return true;
   }
 
   async verify(email: string, password: string) {
@@ -167,13 +203,7 @@ export class AuthService {
     const membership = row ? await this.membershipOf(row.id) : null;
     const known = row && membership ? { userId: row.id, name: membership.name, tenantId: membership.tenantId } : undefined;
     if (!valid || !row || !membership) return { me: null, known };
-    const me: Me = {
-      user: { id: row.id, name: membership.name, email: membership.email },
-      tenant: { id: membership.tenantId, name: membership.tenantName },
-      role: membership.role as Role,
-      mfaEnabled: membership.mfa === true,
-    };
-    return { me, known };
+    return { me: await this.meFor(row.id, membership.tenantId), known };
   }
 
   // Password, plus a current code when two-factor is on. Throws a fixed-shape 401.

@@ -5,7 +5,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import {
   ApiError,
+  type AcceptInvitationInput,
   type CloseTenantInput,
+  type Me,
   type ForgotPasswordInput,
   type MfaEnableInput,
   type MfaSetup,
@@ -159,6 +161,12 @@ export async function signOut(): Promise<void> {
   redirect("/connexion");
 }
 
+export async function signOutTo(next: string): Promise<void> {
+  await post("/auth/sign-out");
+  await endSession();
+  redirect(safeNext(next));
+}
+
 export async function signOutAll(): Promise<void> {
   await post("/auth/sign-out-all");
   await endSession();
@@ -194,4 +202,39 @@ export async function closeWorkspace(input: CloseTenantInput): Promise<Result<ne
   }
   await endSession();
   redirect("/espace-ferme");
+}
+
+/** Leaving the active workspace revokes this session: the user signs in again. */
+export async function leaveWorkspace(userId: string): Promise<Result<never>> {
+  const res = await fetch(`${apiRoot()}/v1/team/members/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+    cache: "no-store",
+    headers: await upstreamHeaders(false),
+  }).catch(() => null);
+  if (!res || !res.ok) {
+    const parsed = ApiError.safeParse(await res?.json().catch(() => null));
+    return { ok: false, error: parsed.success ? parsed.data : { code: "UNKNOWN", message: "HTTP error" } };
+  }
+  await endSession();
+  redirect("/connexion");
+}
+
+/** Accepts an invitation: creates the account when none exists, or adds the membership for the signed-in user. */
+export async function acceptInvitation(input: AcceptInvitationInput): Promise<Result<never>> {
+  const { res, error } = await post("/auth/invitations/accept", input);
+  if (error) return { ok: false, error };
+  await startSession(res);
+  revalidatePath("/", "layout");
+  redirect("/");
+}
+
+export async function switchWorkspace(tenantId: string): Promise<Result<Me>> {
+  const { res, error } = await post("/auth/switch-tenant", { tenantId });
+  if (error) {
+    if (error.code === "FORBIDDEN") return { ok: false, error: { ...error, message: (await getT()).t("error.forbidden") } };
+    return { ok: false, error };
+  }
+  await forwardCookie(res, SESSION_COOKIE);
+  revalidatePath("/", "layout");
+  return { ok: true, data: (await res.json()) as Me };
 }

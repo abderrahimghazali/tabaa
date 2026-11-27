@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { RiAddLine, RiCloseCircleLine, RiDeleteBinLine, RiDownload2Line, RiEditLine, RiFilePdf2Line, RiPrinterLine } from "@remixicon/react";
+import { RiAddLine, RiCloseCircleLine, RiDeleteBinLine, RiDownload2Line, RiEditLine, RiFilePdf2Line, RiMailSendLine, RiPrinterLine } from "@remixicon/react";
 import { PaymentMethod, type ApiError, type Invoice } from "@facture/core";
 import { Card, PageHeader } from "@/components/app/layout";
 import { MobileActionBar, type MoreItem } from "@/components/app/mobile-actions";
@@ -22,7 +22,8 @@ import { IssueList } from "@/components/ui/issue-list";
 import { addPayment, createCreditNote, deleteInvoice, issueInvoice, removePayment } from "@/lib/actions";
 import { fmtDate, fmtNumber, sub } from "@/lib/format";
 import { useI18n } from "@/lib/i18n-client";
-import { useCanAdmin, useCanWrite } from "@/lib/me-client";
+import { useStamp } from "@/lib/use-stamp";
+import { useCan, useCanAdmin, useCanWrite } from "@/lib/me-client";
 import { issuesAt } from "@/lib/result";
 import { statusOf } from "@/lib/status";
 import { cx } from "@/utils/cx";
@@ -30,10 +31,11 @@ import { DateField, DecimalField } from "./fields";
 import { openPdf, PrintPortal } from "./pdf-download";
 import { InvoiceSheet, type SheetModel } from "./invoice-sheet";
 import { StatusChip, dueInfo } from "./status";
+import { useSendDialog } from "./send-dialog";
 
 type Confirm = "issue" | "delete" | "credit" | { payment: string } | null;
 
-type Event = { key: string; tone: "neutral" | "accent" | "ok" | "warn"; title: string; meta: string; href?: string };
+type Event = { key: string; tone: "neutral" | "accent" | "ok" | "warn"; title: string; meta: string; href?: string; ltrTitle?: boolean };
 
 const DOT = { neutral: "bg-foreground-icon-tertiary", accent: "bg-accent-500", ok: "bg-green-500", warn: "bg-orange-500" } as const;
 
@@ -62,6 +64,14 @@ export function InvoiceDetail({
   const canAdmin = useCanAdmin();
   const open = !isDraft && !isCredit && Number(remaining) > 0;
   const canPay = open && canWrite;
+  const canSend = useCan("send") && !isDraft;
+  const lastDelivery = invoice.deliveries[0];
+  const sent = invoice.deliveries.length > 0;
+  const stamp = useStamp();
+  const sendDialog = useSendDialog();
+  const startSend = () =>
+    sendDialog.open({ id: invoice.id, number: invoice.number, isCredit, customerId: invoice.customerId, remindable: open, overdue: invoice.overdue });
+  const sendLabel = !sent ? t("send.button") : open && invoice.overdue ? t("send.remind") : t("send.resend");
   const paidPct = Math.min(100, (Number(invoice.paidAmount) / Math.max(1, Number(invoice.totals.amountDue))) * 100);
   const due = dueInfo(invoice.dueDate, today, t, locale);
 
@@ -97,6 +107,13 @@ export function InvoiceDetail({
       tone: "ok" as const,
       title: t("activity.payment", { method: t(`pm.${p.method}`) }),
       meta: `${fmtDate(p.paidOn)} · ${fmtNumber(p.amount)}`,
+    })),
+    ...invoice.deliveries.map((d) => ({
+      key: d.id,
+      tone: "accent" as const,
+      title: t(`send.act.${d.kind}`, { to: [...d.to, ...d.cc].join(", ") }),
+      meta: `${stamp(d.sentAt)}${d.sentByName ? ` · ${t("send.act.by", { name: d.sentByName })}` : ""}`,
+      ltrTitle: true,
     })),
   ];
 
@@ -154,6 +171,8 @@ export function InvoiceDetail({
   const pdfItem: MoreItem = { key: "pdf", label: t("invoice.pdf"), icon: RiFilePdf2Line, onSelect: () => openPdf(invoice.id) };
   const ublItem: MoreItem = { key: "ubl", label: t("invoice.ubl"), icon: RiDownload2Line, onSelect: downloadUbl };
   const printItem: MoreItem = { key: "print", label: t("invoice.print"), icon: RiPrinterLine, onSelect: () => window.print() };
+  const payItem: MoreItem = { key: "pay", label: t("payment.record"), icon: RiAddLine, onSelect: () => setPayOpen(true) };
+  const sendItem: MoreItem = { key: "send", label: sendLabel, icon: RiMailSendLine, onSelect: startSend };
   const editItem: MoreItem = { key: "edit", label: t("common.edit"), icon: RiEditLine, onSelect: () => router.push(`/factures/${invoice.id}/modifier`) };
   const pdfButton = (
     <Button leadingIcon={RiFilePdf2Line} onClick={() => openPdf(invoice.id)}>
@@ -171,11 +190,25 @@ export function InvoiceDetail({
     ) : (
       pdfButton
     );
+  } else if (canSend && !sent) {
+    mobileMore = [pdfItem, ublItem, printItem, ...(canPay ? [payItem] : [])];
+    mobilePrimary = (
+      <Button leadingIcon={RiMailSendLine} onClick={startSend}>
+        {t("send.button")}
+      </Button>
+    );
   } else if (canPay) {
-    mobileMore = [pdfItem, ublItem, printItem];
+    mobileMore = [pdfItem, ublItem, printItem, ...(canSend ? [sendItem] : [])];
     mobilePrimary = (
       <Button leadingIcon={RiAddLine} onClick={() => setPayOpen(true)}>
         {t("payment.record")}
+      </Button>
+    );
+  } else if (canSend) {
+    mobileMore = [pdfItem, ublItem, printItem];
+    mobilePrimary = (
+      <Button leadingIcon={RiMailSendLine} onClick={startSend}>
+        {sendLabel}
       </Button>
     );
   }
@@ -216,9 +249,19 @@ export function InvoiceDetail({
               {t("invoice.print")}
             </Button>
             <Button variant="secondary" iconOnly leadingIcon={RiPrinterLine} onClick={() => window.print()} aria-label={t("invoice.print")} className="min-[561px]:hidden" />
+            {canSend && (!sent || !canPay) && (
+              <Button variant={sent ? "secondary" : "primary"} leadingIcon={RiMailSendLine} onClick={startSend} aria-label={sendLabel}>
+                <span className="max-[560px]:sr-only">{sendLabel}</span>
+              </Button>
+            )}
             {canPay && (
-              <Button leadingIcon={RiAddLine} onClick={() => setPayOpen(true)} aria-label={t("payment.record")}>
+              <Button variant={canSend && !sent ? "secondary" : "primary"} leadingIcon={RiAddLine} onClick={() => setPayOpen(true)} aria-label={t("payment.record")}>
                 <span className="max-[560px]:sr-only">{t("payment.record")}</span>
+              </Button>
+            )}
+            {canSend && sent && canPay && (
+              <Button variant="secondary" leadingIcon={RiMailSendLine} onClick={startSend} aria-label={sendLabel}>
+                <span className="max-[560px]:sr-only">{sendLabel}</span>
               </Button>
             )}
           </>
@@ -287,6 +330,14 @@ export function InvoiceDetail({
                 <dt className="text-text-secondary">{t("editor.paymentMethod")}</dt>
                 <dd className="text-text-primary">{t(`pm.${invoice.paymentMethod}`)}</dd>
               </div>
+              {!isDraft && (
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-text-secondary">{t("send.lastSent")}</dt>
+                  <dd className={cx("num", lastDelivery ? "text-text-primary" : "text-text-tertiary")}>
+                    {lastDelivery ? t("send.sentOn", { date: stamp(lastDelivery.sentAt) }) : t("send.never")}
+                  </dd>
+                </div>
+              )}
             </dl>
           </Card>
 
@@ -329,7 +380,7 @@ export function InvoiceDetail({
                 <li key={e.key} className="relative flex gap-3 ps-0.5">
                   <span className={cx("relative z-10 mt-1.5 size-2.5 shrink-0 rounded-full ring-4 ring-background-primary-default", DOT[e.tone])} />
                   <div className="min-w-0">
-                    <div className="text-body-medium text-text-primary">{e.title}</div>
+                    <div dir={e.ltrTitle ? "auto" : undefined} className="break-words text-body-medium text-text-primary">{e.title}</div>
                     {e.href ? (
                       <Link href={e.href} className="text-body-regular text-accent-600 hover:underline">{e.meta}</Link>
                     ) : (
@@ -376,6 +427,7 @@ export function InvoiceDetail({
         />
       )}
 
+      {sendDialog.dialog}
       <PaymentDialog
         open={payOpen}
         onOpenChange={setPayOpen}

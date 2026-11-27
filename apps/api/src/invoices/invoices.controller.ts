@@ -1,18 +1,20 @@
 import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Put, Query, Inject, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
-import { InvoiceInput, PaymentInput } from '@facture/core';
+import { DeliveryKind, InvoiceInput, PaymentInput, SendInvoiceInput } from '@facture/core';
 import { Audited } from '../audit/audited.js';
 import { InternalTokenGuard } from '../common/internal-token.guard.js';
 import { AllowViewer, Roles } from '../common/roles.js';
-import { ApiException } from '../common/errors.js';
+import { ApiException, invalid } from '../common/errors.js';
 import { PdfService } from './pdf.service.js';
 import { InvoicesService } from './invoices.service.js';
+import { DeliveryService } from './delivery.service.js';
 
 @Controller('invoices')
 export class InvoicesController {
   constructor(
     @Inject(InvoicesService) private readonly service: InvoicesService,
     @Inject(PdfService) private readonly pdfs: PdfService,
+    @Inject(DeliveryService) private readonly deliveries: DeliveryService,
   ) {}
 
   @Get()
@@ -90,6 +92,21 @@ export class InvoicesController {
       'Content-Disposition': `attachment; filename="${pdf.number}.pdf"`,
     });
     return new StreamableFile(pdf.content);
+  }
+
+  @Get(':id/send-preview')
+  @Roles('OWNER', 'ADMIN', 'MEMBER')
+  sendPreview(@Param('id') id: string, @Query('kind') kind = 'INVOICE') {
+    const parsed = DeliveryKind.safeParse(kind);
+    if (!parsed.success) throw invalid('Paramètre kind invalide.', [{ path: 'kind', rule: 'schema', message: 'INVOICE ou REMINDER.' }]);
+    return this.deliveries.preview(id, parsed.data);
+  }
+
+  @Post(':id/send')
+  @HttpCode(200)
+  @Roles('OWNER', 'ADMIN', 'MEMBER')
+  send(@Param('id') id: string, @Body({ schema: SendInvoiceInput }) body: SendInvoiceInput) {
+    return this.deliveries.send(id, body);
   }
 
   @Post(':id/payments')
