@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ComponentType, type ReactNode } from "react";
+import { Fragment, useState, type ComponentType, type ReactNode } from "react";
 import Link from "next/link";
 import { RiCloseLine, RiSearchLine, RiSettings4Line, RiSideBarFill } from "@remixicon/react";
 import type { Me } from "@facture/core";
@@ -24,6 +24,8 @@ export interface DashboardNavItem {
   icon: IconComponent;
   href: string;
   badge?: ReactNode;
+  /** Label of the section this item opens: a small heading above it (a thin rule when the sidebar is collapsed). */
+  group?: string;
 }
 
 function Collapsible({ collapsed, children, className }: { collapsed: boolean; children: ReactNode; className?: string }) {
@@ -168,7 +170,15 @@ export function DashboardSidebar({
 
           <nav aria-label={t("nav.label")} className={cx("flex w-full flex-col gap-1", !collapsed && "px-0.5")}>
             {items.map((item) => (
-              <NavItem key={item.key} icon={item.icon} label={item.label} href={item.href} badge={item.badge} isSelected={selected === item.key} collapsed={collapsed} onNavigate={onClose} />
+              <Fragment key={item.key}>
+                {item.group &&
+                  (collapsed ? (
+                    <span aria-hidden className="mx-2 my-1.5 h-px bg-border-button-default" />
+                  ) : (
+                    <span className="px-2.5 pt-3 pb-0.5 text-caption-1-medium text-text-tertiary">{item.group}</span>
+                  ))}
+                <NavItem icon={item.icon} label={item.label} href={item.href} badge={item.badge} isSelected={selected === item.key} collapsed={collapsed} onNavigate={onClose} />
+              </Fragment>
             ))}
           </nav>
         </div>

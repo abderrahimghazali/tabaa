@@ -28,6 +28,8 @@ import { issuesAt } from "@/lib/result";
 import { statusOf } from "@/lib/status";
 import { cx } from "@/utils/cx";
 import { DateField, DecimalField } from "./fields";
+import { WithholdingSection } from "@/components/app/withholding-section";
+import { fromCents, toCents, translatePaymentError } from "@/lib/purchase";
 import { openPdf, PrintPortal } from "./pdf-download";
 import { InvoiceSheet, type SheetModel } from "./invoice-sheet";
 import { StatusChip, dueInfo } from "./status";
@@ -64,6 +66,7 @@ export function InvoiceDetail({
   const canAdmin = useCanAdmin();
   const open = !isDraft && !isCredit && Number(remaining) > 0;
   const canPay = open && canWrite;
+  const withheldTotal = invoice.payments.reduce((n, x) => n + toCents(x.vatWithheld) + toCents(x.taxWithheld), 0);
   const canSend = useCan("send") && !isDraft;
   const lastDelivery = invoice.deliveries[0];
   const sent = invoice.deliveries.length > 0;
@@ -106,7 +109,7 @@ export function InvoiceDetail({
       key: p.id,
       tone: "ok" as const,
       title: t("activity.payment", { method: t(`pm.${p.method}`) }),
-      meta: `${fmtDate(p.paidOn)} · ${fmtNumber(p.amount)}`,
+      meta: `${fmtDate(p.paidOn)} · ${toCents(p.vatWithheld) + toCents(p.taxWithheld) > 0 ? t("payment.cashAndHeld", { cash: fmtNumber(p.amount), held: fmtNumber(fromCents(toCents(p.vatWithheld) + toCents(p.taxWithheld))) }) : fmtNumber(p.amount)}`,
     })),
     ...invoice.deliveries.map((d) => ({
       key: d.id,
@@ -302,6 +305,7 @@ export function InvoiceDetail({
                       {t("detail.collected")}
                     </div>
                     <Money value={invoice.paidAmount} locale={locale} className="text-headline-semibold text-text-primary" />
+                    {withheldTotal > 0 && <div className="num text-caption-1-regular text-text-secondary">{t("payment.ofWhichHeld", { amount: fmtNumber(fromCents(withheldTotal)) })}</div>}
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 text-body-regular text-text-secondary">
@@ -363,6 +367,11 @@ export function InvoiceDetail({
                           <span className="num">{fmtDate(p.paidOn)}</span> · {t(`pm.${p.method}`)}
                           {p.reference && <> · <span className="ident">{p.reference}</span></>}
                         </div>
+                        {toCents(p.vatWithheld) + toCents(p.taxWithheld) > 0 && (
+                          <div className="num text-caption-1-regular text-text-secondary">
+                            {t("payment.withheldLine", { total: fmtNumber(fromCents(toCents(p.vatWithheld) + toCents(p.taxWithheld))), vat: fmtNumber(p.vatWithheld), tax: fmtNumber(p.taxWithheld) })}
+                          </div>
+                        )}
                       </div>
                       {canAdmin && <IconButton icon={RiCloseCircleLine} size="small" aria-label={t("payment.void")} onClick={() => setConfirm({ payment: p.id })} disabled={busy} />}
                     </li>
@@ -506,24 +515,65 @@ function PaymentForm({
   const [paidOn, setPaidOn] = useState(today);
   const [method, setMethod] = useState<PaymentMethod>(invoice.paymentMethod);
   const [amount, setAmount] = useState(remaining);
+  const [amountTouched, setAmountTouched] = useState(false);
+  const [vat, setVat] = useState("");
+  const [tax, setTax] = useState("");
+  const [showWh, setShowWh] = useState(false);
   const [reference, setReference] = useState("");
+
+  const due = toCents(remaining);
+  const vatLeft = Math.max(0, toCents(invoice.totals.totalVat) - invoice.payments.reduce((n, x) => n + toCents(x.vatWithheld), 0));
+  const held = toCents(vat) + toCents(tax);
+  const settled = toCents(amount) + held;
+
+  const changeWh = (field: "vat" | "tax", v: string) => {
+    const nextVat = field === "vat" ? v : vat;
+    const nextTax = field === "tax" ? v : tax;
+    if (field === "vat") setVat(v);
+    else setTax(v);
+    if (!amountTouched) setAmount(fromCents(Math.max(0, due - toCents(nextVat) - toCents(nextTax))));
+    setShowWh(true);
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    const issues: NonNullable<ApiError["issues"]> = [];
+    if (settled <= 0) issues.push({ path: "amount", rule: "PAYMENT-POSITIVE", message: "" });
+    else if (settled > due) issues.push({ path: "amount", rule: "PAYMENT-EXCEEDS", message: "" });
+    if (toCents(vat) > vatLeft) issues.push({ path: "vatWithheld", rule: "PAYMENT-VAT-EXCEEDS", message: "" });
+    if (issues.length) return setError({ code: "VALIDATION", message: t("error.fixFields"), issues });
     onPending(true);
-    const res = await addPayment(invoice.id, { paidOn, method, amount: amount || "0", vatWithheld: "0", taxWithheld: "0", reference: reference.trim() || undefined });
+    const res = await addPayment(invoice.id, {
+      paidOn,
+      method,
+      amount: Number(amount || "0").toFixed(2),
+      vatWithheld: Number(vat || "0").toFixed(2),
+      taxWithheld: Number(tax || "0").toFixed(2),
+      reference: reference.trim() || undefined,
+    });
     onPending(false);
     if (res.ok) onSaved();
     else setError(res.error);
   };
 
+  const shown = translatePaymentError(error, t);
   return (
     <form id="payment-form" onSubmit={submit} className="grid gap-4" noValidate>
-      <IssueList error={error} />
+      <IssueList error={shown} />
       <div className="grid gap-4 sm:grid-cols-2">
         <DateField label={t("payment.date")} value={paidOn} onChange={setPaidOn} error={issuesAt(error, "paidOn")} />
-        <DecimalField label={t("payment.amount")} value={amount} onChange={setAmount} digits={[2, 2]} error={issuesAt(error, "amount")} hideSteppers />
+        <DecimalField
+          label={t("payment.amount")}
+          value={amount}
+          onChange={(v) => {
+            setAmount(v);
+            setAmountTouched(true);
+          }}
+          digits={[2, 2]}
+          error={issuesAt(shown, "amount")}
+          hideSteppers
+        />
       </div>
       <Select label={t("editor.paymentMethod")} aria-label={t("editor.paymentMethod")} selectedKey={method} onSelectionChange={(k) => k && setMethod(String(k) as PaymentMethod)}>
         {PaymentMethod.options.map((m) => (
@@ -533,6 +583,25 @@ function PaymentForm({
         ))}
       </Select>
       <Input label={t("payment.reference")} aria-label={t("payment.reference")} hint={t("payment.referenceHint")} value={reference} onChange={setReference} inputDir="ltr" />
+      <WithholdingSection
+        side="sale"
+        open={showWh}
+        onToggle={() => setShowWh((o) => !o)}
+        totalNet={invoice.totals.totalNet}
+        totalVat={invoice.totals.totalVat}
+        vatLeft={vatLeft}
+        vat={vat}
+        tax={tax}
+        onChange={changeWh}
+        errors={{ vat: issuesAt(shown, "vatWithheld"), tax: issuesAt(shown, "taxWithheld") }}
+      />
+      {held > 0 && (
+        <p role="status" className="num rounded-2xl bg-background-secondary-default px-4 py-3 text-body-regular text-text-primary">
+          {settled === due
+            ? t("payment.settles", { due: fmtNumber(fromCents(due)), paid: fmtNumber(amount || "0"), held: fmtNumber(fromCents(held)) })
+            : t("payment.partialLine", { settled: fmtNumber(fromCents(settled)), rest: fmtNumber(fromCents(Math.max(0, due - settled))) })}
+        </p>
+      )}
     </form>
   );
 }

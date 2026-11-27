@@ -19,7 +19,7 @@ export function MobileActionBar({ children, more }: { children?: React.ReactNode
   const items = more ?? [];
   const [open, setOpen] = useState(false);
   return (
-    <div className="nav:hidden">
+    <div className="nav:hidden print:hidden">
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-button-default bg-background-primary-default px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto flex max-w-[640px] items-center gap-2">
           <div className={cx("flex min-w-0 flex-1 [&>*]:flex-1", !children && "hidden")}>{children}</div>

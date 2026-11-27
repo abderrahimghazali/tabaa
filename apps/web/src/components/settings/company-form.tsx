@@ -17,6 +17,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { NumberField } from "@/components/base/number-field/number-field";
 import { Notification } from "@/components/base/notification/notification";
+import { Radio, RadioGroup } from "@/components/base/radio/radio";
 import { SegmentedControl, SegmentedControlItem } from "@/components/base/segmented-control/segmented-control";
 import { toast } from "@/components/base/toast/toast";
 import type { Mark, Zone } from "@/components/invoice/invoice-sheet";
@@ -33,7 +34,7 @@ import { useLeaveGuard } from "./leave-guard";
 
 const FORMS = ["SARL", "SARL AU", "SA", "SNC", "SCS", "Auto-entrepreneur", "Personne physique"];
 const REGIMES = ["MONTHLY", "QUARTERLY", "NOT_SUBJECT"] as const;
-const TAX_POINTS = ["RECEIPTS", "DEBITS"] as const;
+const BASES = ["CASH", "ACCRUAL"] as const;
 const opt = (s: string) => (s.trim() ? s.trim() : undefined);
 const FIELD = "border border-border-button-default bg-background-primary-default shadow-xs";
 
@@ -54,7 +55,8 @@ type Values = {
   tpNumber: string;
   cnssNumber: string;
   vatRegime: (typeof REGIMES)[number];
-  vatTaxPoint: (typeof TAX_POINTS)[number];
+  vatTaxPoint: "RECEIPTS" | "DEBITS";
+  vatBasis: (typeof BASES)[number];
   bankName: string;
   rib: string;
 };
@@ -77,6 +79,7 @@ const fromCompany = (c: Company | null): Values => ({
   cnssNumber: c?.cnssNumber ?? "",
   vatRegime: c?.vatRegime ?? "MONTHLY",
   vatTaxPoint: c?.vatTaxPoint ?? "RECEIPTS",
+  vatBasis: c?.vatBasis ?? "CASH",
   bankName: c?.bankName ?? "",
   rib: digits(c?.rib ?? ""),
 });
@@ -193,8 +196,8 @@ export function CompanyForm({ company }: { company: Company | null }) {
       tpNumber: opt(v.tpNumber),
       cnssNumber: opt(v.cnssNumber),
       vatRegime: v.vatRegime,
-      vatBasis: company?.vatBasis ?? "CASH",
-      vatTaxPoint: v.vatTaxPoint,
+      vatBasis: v.vatBasis,
+      vatTaxPoint: v.vatBasis === "CASH" ? "RECEIPTS" : "DEBITS",
       phone: opt(v.phone),
       email: opt(v.email),
       bankName: opt(v.bankName),
@@ -260,7 +263,8 @@ export function CompanyForm({ company }: { company: Company | null }) {
     tpNumber: opt(v.tpNumber),
     cnssNumber: opt(v.cnssNumber),
     vatRegime: v.vatRegime,
-    vatTaxPoint: v.vatTaxPoint,
+    vatTaxPoint: v.vatBasis === "CASH" ? "RECEIPTS" : "DEBITS",
+    vatBasis: v.vatBasis,
     phone: opt(v.phone),
     email: opt(v.email),
     bankName: opt(v.bankName),
@@ -274,10 +278,10 @@ export function CompanyForm({ company }: { company: Company | null }) {
     <CompanyPreview company={preview} language={language} mark={mark} label={t("co.previewAria")} skeletonLabel={t("co.skel")} />
   );
   const statusEl = (compact: boolean) => <ProfileStatus values={v} t={t} sectionName={sectionName} compact={compact} />;
-  const Hint = ({ k }: { k: "regime" | "taxPoint" }) => (
+  const Hint = () => (
     <p className="mt-2 flex items-start gap-1.5 text-caption-1-regular text-text-secondary">
       <RiInformationLine className="mt-px size-3.5 shrink-0 text-foreground-icon-tertiary" aria-hidden />
-      <span>{k === "regime" ? t(`co.regime.${v.vatRegime}.hint`) : t(`taxPoint.${v.vatTaxPoint}.hint`)}</span>
+      <span>{t(`co.regime.${v.vatRegime}.hint`)}</span>
     </p>
   );
 
@@ -414,25 +418,31 @@ export function CompanyForm({ company }: { company: Company | null }) {
                     </SegmentedControlItem>
                   ))}
                 </SegmentedControl>
-                <Hint k="regime" />
+                <Hint />
               </SettingsRow>
-              <SettingsRow label={t("company.taxPoint")} onZone={setZone}>
-                <SegmentedControl
-                  aria-label={t("company.taxPoint")}
-                  className="w-full"
-                  selectedKeys={new Set([v.vatTaxPoint])}
-                  onSelectionChange={(keys) => {
-                    const k = [...keys][0];
-                    if (k) set("vatTaxPoint", k as Values["vatTaxPoint"]);
+              <SettingsRow label={t("company.vatBasis")} onZone={setZone}>
+                <RadioGroup
+                  aria-label={t("company.vatBasis")}
+                  value={v.vatBasis}
+                  onChange={(k) => {
+                    set("vatBasis", k as Values["vatBasis"]);
+                    set("vatTaxPoint", k === "CASH" ? "RECEIPTS" : "DEBITS");
                   }}
+                  className="gap-2"
                 >
-                  {TAX_POINTS.map((x) => (
-                    <SegmentedControlItem key={x} id={x} className="flex-1">
-                      {t(`taxPoint.${x}`)}
-                    </SegmentedControlItem>
+                  {BASES.map((x) => (
+                    <Radio
+                      key={x}
+                      value={x}
+                      className="w-full items-start rounded-xl border border-border-button-default bg-background-primary-default p-3 transition-colors hover:bg-background-primary-hover data-[selected]:border-border-button-active data-[selected]:bg-background-secondary-default data-[focus-visible]:ring-2 data-[focus-visible]:ring-border-focus-ring"
+                    >
+                      <span className="grid gap-0.5">
+                        <span className="text-body-medium text-text-primary">{t(`vatBasis.${x}`)}</span>
+                        <span className="text-caption-1-regular text-text-secondary">{t(`vatBasis.${x}.hint`)}</span>
+                      </span>
+                    </Radio>
                   ))}
-                </SegmentedControl>
-                <Hint k="taxPoint" />
+                </RadioGroup>
               </SettingsRow>
             </SectionCard>
 

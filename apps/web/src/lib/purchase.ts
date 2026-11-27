@@ -41,3 +41,11 @@ const KNOWN = ["DUPLICATE", "NOT_EDITABLE", "NOT_APPROVED", "HAS_PAYMENTS", "OVE
 export function purchaseError(e: ApiError, t: T): string {
   return KNOWN.includes(e.code) ? t(`purchases.err.${e.code}` as Key) : (e.issues?.[0]?.message ?? e.message);
 }
+
+const PAYMENT_RULES = ["PAYMENT-EXCEEDS", "PAYMENT-VAT-EXCEEDS", "PAYMENT-POSITIVE", "PAYMENT-NEGATIVE"];
+
+/** Replaces the server's French messages for the payment validation rules by translated ones. */
+export function translatePaymentError(e: ApiError | null, t: T): ApiError | null {
+  if (!e?.issues) return e;
+  return { ...e, issues: e.issues.map((i) => (PAYMENT_RULES.includes(i.rule) ? { ...i, message: t(`payment.err.${i.rule}` as Key) } : i)) };
+}

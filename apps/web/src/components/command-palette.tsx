@@ -14,6 +14,7 @@ import {
   RiHome5Line,
   RiSettings4Line,
   RiBankLine,
+  RiFileChartLine,
   RiShoppingBag3Line,
   RiTruckLine,
 } from "@remixicon/react";
@@ -44,6 +45,7 @@ const ACTIONS: { id: string; key: Key; icon: typeof RiAddLine }[] = [
   { id: "/achats", key: "nav.purchases", icon: RiShoppingBag3Line },
   { id: "/clients", key: "nav.customers", icon: RiGroupLine },
   { id: "/fournisseurs", key: "nav.suppliers", icon: RiTruckLine },
+  { id: "/declarations", key: "nav.reports", icon: RiFileChartLine },
   { id: "/articles", key: "nav.items", icon: RiBox3Line },
   { id: "/parametres/entreprise", key: "company.settings", icon: RiBuilding2Line },
   { id: "/parametres", key: "nav.settings", icon: RiSettings4Line },

@@ -62,6 +62,12 @@ Tabaa (طابع, « le cachet ») est un logiciel de facturation pensé pour cet
 | **Tableau de bord** | Créances par ancienneté, facturé et encaissé sur six mois, délai moyen de paiement, échéancier |
 | **PDF** | Téléchargement en PDF, identique à l'écran, texte sélectionnable et arabe compris ; le fichier d'une facture émise est généré une fois, conservé avec son empreinte et ne change plus |
 | **UBL 2.1** | Export XML de chaque facture émise |
+| **Envoi par e-mail** | Envoi de la facture au client avec le PDF et, au choix, le fichier UBL ; relances ; historique des envois |
+| **Banque** | Import d'un relevé bancaire (CSV, lu dans le navigateur), rapprochement des virements reçus avec les factures, suggestions par numéro, montant ou nom |
+| **Achats** | Factures fournisseurs par taux de TVA, validation par un propriétaire ou un administrateur, paiements, contrôles (ICE, délai, plafond des espèces) |
+| **Retenue à la source** | Sur les paiements reçus et versés : TVA retenue et retenue sur honoraires, qui soldent la facture sans être une remise |
+| **Déclarations** | États préparatoires : TVA (collectée, déductible, relevé de déductions), retenues à la source, délais de paiement (loi 69-21), avec export CSV et impression |
+| **Équipe** | Invitations, cinq rôles dont expert-comptable en lecture seule, plusieurs espaces par personne |
 | **Clients et catalogue** | Fiche client avec encours, articles et services avec taux de TVA |
 | **Comptes et espaces** | Inscription avec vérification de l'e-mail, double authentification, réinitialisation du mot de passe ; un espace isolé par entreprise, avec rôles |
 | **Deux langues** | Interface en français et en arabe, avec mise en page de droite à gauche |
@@ -80,6 +86,19 @@ Tabaa (طابع, « le cachet ») est un logiciel de facturation pensé pour cet
     <td align="center"><sub>Éditeur avec aperçu en direct</sub></td>
   </tr>
 </table>
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><img src=".github/screenshots/declarations-tva.png" alt="État préparatoire de la déclaration de TVA"></td>
+    <td width="50%" valign="top"><img src=".github/screenshots/achat.png" alt="Facture d'achat avec contrôles, validation et paiements"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Préparation de la déclaration de TVA</sub></td>
+    <td align="center"><sub>Facture d'achat</sub></td>
+  </tr>
+</table>
+
+> Les états de la rubrique Déclarations sont des aides à la préparation. Ils ne sont pas des déclarations, rien n'est transmis à la DGI, et les règles de calcul (en particulier l'amende de la loi 69-21 et l'historique du taux directeur) sont à faire confirmer par un expert-comptable.
 
 <p align="center">
   <img src=".github/screenshots/dashboard-ar.png" alt="لوحة القيادة باللغة العربية" width="900"><br>
@@ -242,9 +261,8 @@ gantt
     Équipe, rôles, accès expert-comptable    :done, 2026-11-27, 1d
     Import bancaire et rapprochement         :done, 2026-11-27, 1d
     Factures d'achat et validation           :done, 2026-11-27, 1d
-    section Ensuite
-    TVA, retenue à la source, relevés        :2027-01-26, 6w
-    Délais de paiement, loi 69-21            :2027-02-16, 5w
+    TVA, retenue à la source, relevés        :done, 2026-11-27, 1d
+    Délais de paiement, loi 69-21            :done, 2026-11-27, 1d
     section DGI
     Connecteur, à la publication des spécifications :milestone, 2027-06-01, 0d
 ```

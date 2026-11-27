@@ -34,6 +34,9 @@ import {
   type PurchaseInput,
   type PurchaseList,
   type PurchasePaymentInput,
+  type VatStatement,
+  type WithholdingStatement,
+  type PaymentTermsStatement,
 } from "@facture/core";
 
 const BASE = `${apiRoot()}/v1`;
@@ -156,6 +159,10 @@ export const api = {
   disputePurchase: (id: string, disputed: boolean) => call<Purchase>(`/purchases/${seg(id)}/dispute`, { method: "POST", body: body({ disputed }) }),
   payPurchase: (id: string, input: PurchasePaymentInput) => call<Purchase>(`/purchases/${seg(id)}/payments`, { method: "POST", body: body(input) }),
   voidPurchasePayment: (id: string, paymentId: string) => call<Purchase>(`/purchases/${seg(id)}/payments/${seg(paymentId)}`, { method: "DELETE" }),
+
+  vatReport: (period: string, previousCredit?: string) => call<VatStatement>(`/reports/vat${qs({ period, previousCredit })}`),
+  withholdingReport: (period: string) => call<WithholdingStatement>(`/reports/withholdings${qs({ period })}`),
+  paymentTermsReport: (period: string, keyRate?: string) => call<PaymentTermsStatement>(`/reports/payment-terms${qs({ period, keyRate })}`),
 
   dashboard: () => call<Dashboard>("/dashboard"),
 

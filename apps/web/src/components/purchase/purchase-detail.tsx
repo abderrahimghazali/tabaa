@@ -21,6 +21,7 @@ import { Notice } from "@/components/auth/fields";
 import { CrumbLabel, TopbarActions } from "@/components/frame";
 import { DateField, DecimalField } from "@/components/invoice/fields";
 import { IssueList } from "@/components/ui/issue-list";
+import { WithholdingSection } from "@/components/app/withholding-section";
 import {
   approvePurchase,
   deletePurchase,
@@ -295,10 +296,6 @@ export function PurchaseDetail({ purchase: p, today }: { purchase: Purchase; tod
                   {p.approvedByName ? t("purchases.approvedBy", { name: p.approvedByName, date: p.approvedAt ? stamp(p.approvedAt) : "" }) : t("purchases.approvedAt", { date: p.approvedAt ? stamp(p.approvedAt) : "" })}
                 </p>
                 {p.disputed && <p className="text-body-regular text-text-secondary">{t("purchases.disputeNote")}</p>}
-                <div className="flex flex-wrap gap-2">
-                  {canWrite && <Button size="small" variant="secondary" leadingIcon={RiFlagLine} onClick={() => void toggleDispute()} disabled={busy}>{t(p.disputed ? "purchases.disputeOff" : "purchases.disputeOn")}</Button>}
-                  {canReopen && <Button size="small" variant="secondary" leadingIcon={RiHistoryLine} onClick={() => setConfirm("reopen")} disabled={busy}>{t("purchases.reopen")}</Button>}
-                </div>
                 {canAdmin && !canReopen && p.payments.length > 0 && <p className="text-caption-1-regular text-text-tertiary">{t("purchases.reopenBlocked")}</p>}
               </div>
             )}
@@ -453,21 +450,13 @@ function PaymentDialog({ purchase: p, today, onClose }: { purchase: Purchase; to
   const settled = toCents(amount) + held;
   const err = (path: string) => issuesAt(error, path);
 
-  const withhold = (field: "vat" | "tax", cents: number) => {
-    const v = fromCents(Math.max(0, cents));
+  const changeWhAuto = (field: "vat" | "tax", v: string) => {
     const nextVat = field === "vat" ? v : vat;
     const nextTax = field === "tax" ? v : tax;
     if (field === "vat") setVat(v);
     else setTax(v);
-    if (!amountTouched) setAmount(fromCents(Math.max(0, due - toCents(nextVat) - toCents(nextTax))));
+    setAmount(fromCents(Math.max(0, due - toCents(nextVat) - toCents(nextTax))));
     setShowWh(true);
-  };
-  const changeWh = (field: "vat" | "tax", v: string) => {
-    const nextVat = field === "vat" ? v : vat;
-    const nextTax = field === "tax" ? v : tax;
-    if (field === "vat") setVat(v);
-    else setTax(v);
-    if (!amountTouched) setAmount(fromCents(Math.max(0, due - toCents(nextVat) - toCents(nextTax))));
   };
 
   const problems: string[] = [];
@@ -497,10 +486,6 @@ function PaymentDialog({ purchase: p, today, onClose }: { purchase: Purchase; to
     } else setError(res.error);
   };
 
-  const helper = (label: string, field: "vat" | "tax", cents: number) => (
-    <Button size="small" variant="secondary" onClick={() => withhold(field, field === "vat" ? Math.min(cents, vatLeft) : cents)}>{label}</Button>
-  );
-
   return (
     <Modal isOpen onOpenChange={(o) => !o && !pending && onClose()} size="lg" aria-label={t("purchases.pay.record")}>
       <ModalHeader title={t("purchases.pay.record")} description={t("purchases.pay.hint", { number: p.number, amount: fmtNumber(p.amountDue) })} closeLabel={t("common.close")} />
@@ -508,7 +493,7 @@ function PaymentDialog({ purchase: p, today, onClose }: { purchase: Purchase; to
         <form id="purchase-pay-form" onSubmit={submit} noValidate className="grid gap-4 pt-1">
           {error && <IssueList error={{ ...error, message: purchaseError(error, t) }} />}
           <div className="grid gap-4 sm:grid-cols-2">
-            <DateField label={t("payment.date")} value={paidOn} onChange={setPaidOn} error={err("paidOn")} />
+            <DateField label={t("purchases.pay.date")} value={paidOn} onChange={setPaidOn} error={err("paidOn")} />
             <Select label={t("editor.paymentMethod")} selectedKey={method} onSelectionChange={(k) => k && setMethod(String(k) as typeof method)}>
               {PaymentMethod.options.map((m) => (
                 <SelectItem key={m} id={m}>{t(`pm.${m}`)}</SelectItem>
@@ -529,39 +514,18 @@ function PaymentDialog({ purchase: p, today, onClose }: { purchase: Purchase; to
           />
           <Input label={t("payment.reference")} value={reference} onChange={setReference} inputDir="ltr" maxLength={100} hint={t("payment.referenceHint")} />
 
-          <div className="rounded-2xl border border-border-button-default">
-            <button
-              type="button"
-              aria-expanded={showWh}
-              onClick={() => setShowWh((o) => !o)}
-              className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-2xl px-4 text-start text-body-medium text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
-            >
-              {t("purchases.pay.withholding")}
-              <span className="text-caption-1-regular text-text-secondary">{held > 0 ? fmtNumber(fromCents(held)) : t("purchases.pay.optional")}</span>
-            </button>
-            {showWh && (
-              <div className="grid gap-3 border-t border-separator-border p-4">
-                <p className="text-body-regular text-text-secondary">{t("purchases.pay.whExplain")}</p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid content-start gap-2">
-                    <DecimalField label={t("purchases.pay.vatWithheld")} value={vat} onChange={(v) => changeWh("vat", v)} digits={[2, 2]} hideSteppers error={err("vatWithheld")} />
-                    <div className="flex flex-wrap gap-1.5">
-                      {helper(t("purchases.pay.vat75"), "vat", Math.round(toCents(p.totalVat) * 0.75))}
-                      {helper(t("purchases.pay.vat100"), "vat", toCents(p.totalVat))}
-                    </div>
-                  </div>
-                  <div className="grid content-start gap-2">
-                    <DecimalField label={t("purchases.pay.taxWithheld")} value={tax} onChange={(v) => changeWh("tax", v)} digits={[2, 2]} hideSteppers error={err("taxWithheld")} />
-                    <div className="flex flex-wrap gap-1.5">
-                      {helper(t("purchases.pay.tax5"), "tax", Math.round(toCents(p.totalNet) * 0.05))}
-                      {helper(t("purchases.pay.tax10"), "tax", Math.round(toCents(p.totalNet) * 0.1))}
-                    </div>
-                  </div>
-                </div>
-                <p className="text-caption-1-regular text-text-tertiary">{t("purchases.pay.whCheck")}</p>
-              </div>
-            )}
-          </div>
+          <WithholdingSection
+            side="purchase"
+            open={showWh}
+            onToggle={() => setShowWh((o) => !o)}
+            totalNet={p.totalNet}
+            totalVat={p.totalVat}
+            vatLeft={vatLeft}
+            vat={vat}
+            tax={tax}
+            onChange={(field, v) => (amountTouched ? (field === "vat" ? setVat(v) : setTax(v)) : changeWhAuto(field, v))}
+            errors={{ vat: err("vatWithheld"), tax: err("taxWithheld") }}
+          />
 
           <div role="status" className={cx("rounded-2xl px-4 py-3 text-body-regular", problems.length ? "bg-status-rose-background text-status-rose-text" : "bg-background-secondary-default text-text-primary")}>
             {problems.length ? (

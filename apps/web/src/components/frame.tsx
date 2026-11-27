@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
-import { RiBankLine, RiBox3Line, RiShoppingBag3Line, RiTruckLine, RiFileList3Line, RiGroupLine, RiHome5Line, RiMenuLine } from "@remixicon/react";
+import { RiBankLine, RiBox3Line, RiFileChartLine, RiShoppingBag3Line, RiTruckLine, RiFileList3Line, RiGroupLine, RiHome5Line, RiMenuLine } from "@remixicon/react";
 import { DashboardSidebar, type DashboardNavItem } from "@/components/application/dashboard/dashboard-sidebar";
 import { Counter } from "@/components/base/badges/counter";
 import { Breadcrumb, BreadcrumbItem } from "@/components/base/breadcrumb/breadcrumb";
@@ -42,6 +42,10 @@ const SEGMENTS: Record<string, Key> = {
   banque: "nav.bank",
   achats: "nav.purchases",
   fournisseurs: "nav.suppliers",
+  declarations: "nav.reports",
+  tva: "reports.tab.vat",
+  retenues: "reports.tab.withholdings",
+  delais: "reports.tab.terms",
   compte: "settings.account",
   securite: "settings.security",
   equipe: "settings.team",
@@ -66,7 +70,7 @@ function Topbar() {
   });
   const showOnPhone = crumbs.length >= 2 && parts[0] !== "parametres";
   return (
-    <div className={cx("min-h-14 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 sm:px-6 nav:flex nav:px-8", showOnPhone ? "flex" : "hidden")}>
+    <div className={cx("min-h-14 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 sm:px-6 nav:flex nav:px-8 print:hidden", showOnPhone ? "flex" : "hidden")}>
       <Breadcrumb aria-label={t("nav.breadcrumb")} className="w-full min-w-0 nav:w-auto nav:flex-1">
         <BreadcrumbItem icon={RiHome5Line} href="/" current={parts.length === 0}>
           <span className={parts.length ? "sr-only" : undefined}>{t("nav.dashboard")}</span>
@@ -93,6 +97,7 @@ function Navigation({ me, drafts, overdue, bank, toApprove, mobile, onClose }: {
       label: t("nav.invoices"),
       icon: RiFileList3Line,
       href: "/factures",
+      group: t("nav.group.sales"),
       badge: (
         <>
           {overdue > 0 && <Counter color="danger" title={t("dash.overdue")}>{overdue}</Counter>}
@@ -100,23 +105,26 @@ function Navigation({ me, drafts, overdue, bank, toApprove, mobile, onClose }: {
         </>
       ),
     },
-    {
-      key: "bank",
-      label: t("nav.bank"),
-      icon: RiBankLine,
-      href: "/banque",
-      badge: bank > 0 ? <Counter color="neutral" title={t("bank.badge")}>{bank}</Counter> : undefined,
-    },
+    { key: "customers", label: t("nav.customers"), icon: RiGroupLine, href: "/clients" },
+    { key: "items", label: t("nav.items"), icon: RiBox3Line, href: "/articles" },
     {
       key: "purchases",
       label: t("nav.purchases"),
       icon: RiShoppingBag3Line,
       href: "/achats",
+      group: t("nav.group.purchases"),
       badge: toApprove > 0 ? <Counter color="neutral" title={t("purchases.badge")}>{toApprove}</Counter> : undefined,
     },
-    { key: "customers", label: t("nav.customers"), icon: RiGroupLine, href: "/clients" },
     { key: "suppliers", label: t("nav.suppliers"), icon: RiTruckLine, href: "/fournisseurs" },
-    { key: "items", label: t("nav.items"), icon: RiBox3Line, href: "/articles" },
+    {
+      key: "bank",
+      label: t("nav.bank"),
+      icon: RiBankLine,
+      href: "/banque",
+      group: t("nav.group.follow"),
+      badge: bank > 0 ? <Counter color="neutral" title={t("bank.badge")}>{bank}</Counter> : undefined,
+    },
+    { key: "reports", label: t("nav.reports"), icon: RiFileChartLine, href: "/declarations" },
   ];
   const selected =
     items.find((i) => (i.href === "/" ? pathname === "/" : pathname === i.href || pathname.startsWith(`${i.href}/`)))?.key ?? "";
@@ -144,13 +152,13 @@ export function Frame({ me, drafts, overdue, bank, toApprove, children }: { me: 
   return (
     <CommandPaletteHost>
       <CrumbCtx value={{ label, set: setLabel }}>
-        <div className="min-h-dvh bg-background-full nav:flex">
-          <div className="sticky top-0 hidden h-dvh shrink-0 p-3 nav:block">
+        <div className="min-h-dvh bg-background-full nav:flex print:block print:min-h-0">
+          <div className="sticky top-0 hidden h-dvh shrink-0 p-3 nav:block print:hidden">
             <Navigation me={me} drafts={drafts} overdue={overdue} bank={bank} toApprove={toApprove} />
           </div>
 
           <div className="min-w-0 flex-1">
-            <header className="flex h-14 items-center justify-between gap-3 px-4 sm:px-6 nav:hidden">
+            <header className="flex h-14 items-center justify-between gap-3 px-4 sm:px-6 nav:hidden print:hidden">
               <span className="flex items-center gap-2.5">
                 <BrandMark size={28} />
                 <span className="brand-word text-[21px] leading-none text-text-primary">{t("brand.name")}</span>
@@ -161,9 +169,9 @@ export function Frame({ me, drafts, overdue, bank, toApprove, children }: { me: 
               </Drawer>
             </header>
             <Topbar />
-            <main className="mx-auto max-w-[1280px] px-4 pt-1 pb-28 sm:px-6 nav:px-8 nav:pt-2 nav:pb-16">
+            <main className="mx-auto max-w-[1280px] px-4 pt-1 pb-28 sm:px-6 nav:px-8 nav:pt-2 nav:pb-16 print:max-w-none print:p-0">
               {(me.role === "VIEWER" || me.role === "ACCOUNTANT") && (
-                <p role="status" className="mb-4 rounded-xl bg-status-blue-background px-3 py-2.5 text-body-medium text-status-blue-text">
+                <p role="status" className="mb-4 rounded-xl bg-status-blue-background px-3 py-2.5 text-body-medium text-status-blue-text print:hidden">
                   {t("role.readOnlyNote", { role: t(`role.${me.role}`) })}
                 </p>
               )}

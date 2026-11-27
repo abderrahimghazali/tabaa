@@ -7,6 +7,7 @@ import { security } from "./i18n-security";
 import { team } from "./i18n-team";
 import { bank } from "./i18n-bank";
 import { purchase } from "./i18n-purchase";
+import { reports } from "./i18n-reports";
 import { settings } from "./i18n-settings";
 
 // [français, العربية]
@@ -511,7 +512,7 @@ const base = {
   "sheet.capital": ["au capital de", "رأس المال"],
 } as const satisfies Record<string, readonly [string, string]>;
 
-const dict = { ...base, ...auth, ...dashboard, ...lists, ...invoice, ...settings, ...security, ...team, ...bank, ...purchase };
+const dict = { ...base, ...auth, ...dashboard, ...lists, ...invoice, ...settings, ...security, ...team, ...bank, ...purchase, ...reports };
 
 export type Key = keyof typeof dict;
 export type T = (key: Key, vars?: Record<string, string | number>) => string;

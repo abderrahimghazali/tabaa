@@ -1220,8 +1220,16 @@ html[dir="rtl"] .grow-x-rtl {
 }
 
 @media print {
-  .pdf-root thead {
+  .pdf-root thead,
+  table thead {
     display: table-header-group;
+  }
+  table tr {
+    break-inside: avoid;
+  }
+  h2,
+  h3 {
+    break-after: avoid;
   }
 }
 
