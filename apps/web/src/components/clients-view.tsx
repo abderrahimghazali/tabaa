@@ -2,7 +2,7 @@
 
 import { MobileActionBar } from "@/components/app/mobile-actions";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { RiAddLine, RiGroupLine } from "@remixicon/react";
 import { getCoreRowModel, getPaginationRowModel, getSortedRowModel, useReactTable } from "@tanstack/react-table";
@@ -17,6 +17,7 @@ import { Money } from "@/components/app/money";
 import { NameAvatar } from "@/components/app/name-avatar";
 import { groupDigits, ICE_GROUPS } from "@/lib/format";
 import { useI18n } from "@/lib/i18n-client";
+import type { Key } from "@/lib/i18n";
 import { cx } from "@/utils/cx";
 import { TopbarActions } from "./frame";
 import { EmptyState, FilterSelect, MobileFilters, ListCard, ListToolbar, RouterBoundary, SortHeader, headerLabel } from "./invoice/list-kit";
@@ -30,8 +31,12 @@ const typeColor: Record<Party["type"], ChipColor> = { BUSINESS: "gray", PUBLIC: 
 
 type Row = Party & { owed: number };
 
-export function ClientsView({ parties, outstanding, openNew }: { parties: Party[]; outstanding: Record<string, string>; openNew?: boolean }) {
-  const { t, locale } = useI18n();
+export function ClientsView({ parties, outstanding, openNew, kind = "CUSTOMER" }: { parties: Party[]; outstanding: Record<string, string>; openNew?: boolean; kind?: "CUSTOMER" | "SUPPLIER" }) {
+  const { t: tr, locale } = useI18n();
+  const supplier = kind === "SUPPLIER";
+  const base = supplier ? "/fournisseurs" : "/clients";
+  // The same screen serves both lists: only the wording and the detail route differ.
+  const t = useCallback((key: Key, vars?: Record<string, string | number>) => tr(supplier ? (key.replace(/^customers\./, "suppliers.") as Key) : key, vars), [tr, supplier]);
   const canWrite = useCanWrite();
   const [creating, setCreating] = useState(!!openNew && canWrite);
   const [q, setQ] = useState("");
@@ -165,7 +170,7 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
           <>
             <div className="mt-2 hidden nav:block">
               <RouterBoundary>
-                <Table aria-label={t("lists.customersTable")} selectionMode="none" className="min-w-[760px]">
+                <Table aria-label={tr(supplier ? "lists.suppliersTable" : "lists.customersTable")} selectionMode="none" className="min-w-[760px]">
                   <TableHeader>
                     {headers.map((h) => (
                       <TableColumn key={h.id} id={h.id} isRowHeader={h.id === "name"} className={cx(h.id === "owed" && "text-end")}>
@@ -177,7 +182,7 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
                   </TableHeader>
                   <TableBody>
                     {rows.map((row) => (
-                      <TableRow key={row.id} id={row.id} href={`/clients/${row.original.id}`} className="cursor-pointer hover:bg-background-secondary-default">
+                      <TableRow key={row.id} id={row.id} href={`${base}/${row.original.id}`} className="cursor-pointer hover:bg-background-secondary-default">
                         {row.getVisibleCells().map((cell) => (
                           <TableCell key={cell.id} className={cx(cell.column.id === "owed" && "text-end")}>
                             {typeof cell.column.columnDef.cell === "function" ? cell.column.columnDef.cell(cell.getContext()) : null}
@@ -197,7 +202,7 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
                   <li key={row.id} className="relative flex items-center gap-3 p-4">
                     <NameAvatar name={p.name} size="md" />
                     <div className="min-w-0 flex-1">
-                      <Link href={`/clients/${p.id}`} className="block truncate text-body-medium text-text-primary after:absolute after:inset-0">{p.name}</Link>
+                      <Link href={`${base}/${p.id}`} className="block truncate text-body-medium text-text-primary after:absolute after:inset-0">{p.name}</Link>
                       <div className="flex flex-wrap items-center gap-x-2 text-caption-1-regular text-text-tertiary">
                         <span>{p.address.city}</span>
                         {p.ice && <span className="ident">{groupDigits(p.ice, ICE_GROUPS)}</span>}
@@ -225,7 +230,7 @@ export function ClientsView({ parties, outstanding, openNew }: { parties: Party[
         )}
       </ListCard>
 
-      <PartyDrawer isOpen={creating} onOpenChange={setCreating} />
+      <PartyDrawer isOpen={creating} onOpenChange={setCreating} defaultKind={kind} />
     </div>
   );
 }

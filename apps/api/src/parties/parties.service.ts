@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { PartyInput, type Party } from '@facture/core';
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
-import { invoices, parties } from '../db/schema.js';
+import { invoices, parties, purchases } from '../db/schema.js';
 import { TenantDb } from '../db/tenant-db.js';
 import { conflict, notFound } from '../common/errors.js';
 import { dto } from '../common/util.js';
@@ -57,7 +57,11 @@ export class PartiesService {
       .select({ n: sql<number>`count(*)::int` })
       .from(invoices)
       .where(eq(invoices.customerId, id));
-    if (n > 0) throw conflict('Ce tiers est utilisé par des factures et ne peut pas être supprimé.');
+    const [{ m }] = await this.t.tx
+      .select({ m: sql<number>`count(*)::int` })
+      .from(purchases)
+      .where(eq(purchases.supplierId, id));
+    if (n > 0 || m > 0) throw conflict('Ce tiers est utilisé par des factures et ne peut pas être supprimé.');
     await this.t.tx.delete(parties).where(eq(parties.id, id));
   }
 }

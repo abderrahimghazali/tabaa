@@ -1,6 +1,8 @@
-import { RiAddLine } from "@remixicon/react";
+import { RiAddLine, RiArrowRightSLine, RiBankLine } from "@remixicon/react";
+import Link from "next/link";
 import { connection } from "next/server";
-import { getDashboard, requireCompany } from "@/lib/data";
+import { unstable_rethrow } from "next/navigation";
+import { getBankToMatch, getDashboard, getMe, getPurchaseOverview, requireCompany } from "@/lib/data";
 import { daysBetween, fmtNumber, longDate, todayIso } from "@/lib/format";
 import { getT } from "@/lib/locale";
 import { Card, PageHeader } from "@/components/app/layout";
@@ -10,6 +12,8 @@ import { Echeancier } from "@/components/dashboard/echeancier";
 import { InvoicedCollectedChart } from "@/components/dashboard/invoiced-collected-chart";
 import { Kpis } from "@/components/dashboard/kpis";
 import { RecentInvoices, RecentPayments, TopCustomers } from "@/components/dashboard/lists";
+import { SuppliersCard } from "@/components/dashboard/suppliers-card";
+import { can } from "@/lib/permissions";
 import { MfaPrompt } from "@/components/app/mfa-prompt";
 import { WriteOnly } from "@/components/app/write-only";
 import { TopbarActions } from "@/components/frame";
@@ -19,6 +23,15 @@ export default async function DashboardPage() {
   const { t, locale } = await getT();
   const company = await requireCompany();
   const d = await getDashboard();
+  const bank = await getBankToMatch().catch((e) => {
+    unstable_rethrow(e);
+    return 0;
+  });
+  const purchases = await getPurchaseOverview().catch((e) => {
+    unstable_rethrow(e);
+    return null;
+  });
+  const me = await getMe();
   await connection();
   const today = todayIso();
   const soon = d.receivables.filter((r) => {
@@ -62,6 +75,17 @@ export default async function DashboardPage() {
         }
       />
 
+      {bank > 0 && (
+        <Link
+          href="/banque"
+          className="mb-4 flex min-h-11 items-center gap-2.5 rounded-2xl bg-background-secondary-default px-4 py-2.5 text-body-medium text-text-primary outline-none transition-colors hover:bg-background-secondary-hover focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+        >
+          <RiBankLine className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+          <span className="min-w-0 flex-1">{t("dash.bankToMatch", { n: bank })}</span>
+          <RiArrowRightSLine className="size-5 shrink-0 text-foreground-icon-secondary rtl:-scale-x-100" aria-hidden />
+        </Link>
+      )}
+
       <MfaPrompt />
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -72,6 +96,7 @@ export default async function DashboardPage() {
           <div className="grid grid-cols-[minmax(0,1fr)] content-start gap-4">
             <AgingCard aging={d.aging} />
             <RingCard days={d.averageDaysToPay} />
+            {purchases && <SuppliersCard overview={purchases} t={t} locale={locale} canApprove={can(me.role, "admin")} />}
           </div>
         </div>
 

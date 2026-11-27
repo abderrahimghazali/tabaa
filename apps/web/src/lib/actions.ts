@@ -3,6 +3,10 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import type {
+  PurchaseInput,
+  PurchasePaymentInput,
+  BankImportInput,
+  BankMatchInput,
   DeliveryKind,
   Role,
   SendInvoiceInput,
@@ -14,6 +18,7 @@ import type {
   PaymentInput,
 } from "@facture/core";
 import { api, ApiFailure } from "./api";
+import { sub } from "./format";
 import { ensureStoredPdf } from "./invoice-pdf";
 import { PdfTimeout, PdfUnavailable } from "./pdf-render";
 import { getT } from "./locale";
@@ -96,3 +101,50 @@ export const resendInvitation = async (id: string) => run(() => api.resendInvita
 export const revokeInvitation = async (id: string) => run(() => api.revokeInvitation(id));
 export const changeMemberRole = async (userId: string, role: Role) => run(() => api.changeRole(userId, role));
 export const removeMember = async (userId: string) => run(() => api.removeMember(userId));
+
+export const importBank = async (input: BankImportInput) => run(() => api.importBank(input));
+export const deleteBankImport = async (id: string) => run(() => api.deleteBankImport(id));
+export const matchBankLine = async (id: string, input: BankMatchInput) => run(() => api.bankMatch(id, input));
+export const unmatchBankLine = async (id: string) => run(() => api.bankUnmatch(id));
+export const ignoreBankLine = async (id: string) => run(() => api.bankIgnore(id));
+export const unignoreBankLine = async (id: string) => run(() => api.bankUnignore(id));
+
+/** Issued invoices that still have something due, for the matching panel. */
+export async function loadOpenInvoices() {
+  try {
+    const all = await api.invoices({ state: "ISSUED" });
+    return {
+      ok: true as const,
+      data: all
+        .filter((i) => i.type !== "CREDIT_NOTE" && i.paymentStatus !== "PAID")
+        .map((i) => ({ id: i.id, number: i.number ?? "", customerName: i.customerName, dueDate: i.dueDate, remaining: sub(i.amountDue, i.paidAmount) }))
+        .filter((i) => Number(i.remaining) > 0),
+    };
+  } catch (e) {
+    if (e instanceof ApiFailure) return { ok: false as const, error: e.error };
+    throw e;
+  }
+}
+
+export const savePurchase = async (id: string | null, input: PurchaseInput) =>
+  run(() => (id ? api.updatePurchase(id, input) : api.createPurchase(input)));
+export const deletePurchase = async (id: string) => run(() => api.deletePurchase(id));
+export const approvePurchase = async (id: string) => run(() => api.approvePurchase(id));
+export const rejectPurchase = async (id: string, reason: string) => run(() => api.rejectPurchase(id, reason));
+export const reopenPurchase = async (id: string) => run(() => api.reopenPurchase(id));
+export const disputePurchase = async (id: string, disputed: boolean) => run(() => api.disputePurchase(id, disputed));
+export const payPurchase = async (id: string, input: PurchasePaymentInput) => run(() => api.payPurchase(id, input));
+export const voidPurchasePayment = async (id: string, paymentId: string) => run(() => api.voidPurchasePayment(id, paymentId));
+
+/** Looks for an existing invoice of this supplier with the same number, to link from a DUPLICATE refusal. */
+export async function findPurchaseByNumber(supplierId: string, number: string) {
+  try {
+    const list = await api.purchases({ supplierId, q: number.trim(), pageSize: "20" });
+    const norm = (v: string) => v.replace(/\s+/g, "").toLowerCase();
+    const hit = list.items.find((p) => norm(p.number) === norm(number));
+    return hit ? { id: hit.id, number: hit.number } : null;
+  } catch (e) {
+    if (e instanceof ApiFailure) return null;
+    throw e;
+  }
+}

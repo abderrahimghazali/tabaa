@@ -10,6 +10,8 @@ import { CompanyService } from './company/company.service.js';
 import { ItemsService } from './items/items.service.js';
 import { PartiesService } from './parties/parties.service.js';
 import { InvoicesService } from './invoices/invoices.service.js';
+import { BankService } from './bank/bank.service.js';
+import { PurchasesService } from './purchases/purchases.service.js';
 
 const day = (offset: number) => {
   const d = new Date();
@@ -152,6 +154,7 @@ await tx(() =>
     tpNumber: '35192847',
     cnssNumber: '8456213',
     vatRegime: 'MONTHLY',
+    vatBasis: 'CASH',
     vatTaxPoint: 'RECEIPTS',
     phone: '+212 5 22 36 54 10',
     email: 'contact@maghreb-digital.ma',
@@ -191,7 +194,7 @@ for (const p of plans) {
   for (const [after, share, method] of p.pay ?? []) {
     const paidOn = day(Math.min(p.at + after, 0));
     const amount = new Decimal(issued.totals.amountDue).times(share).toDecimalPlaces(2).toFixed(2);
-    await tx(() => invoices.addPayment(issued.id, { paidOn, method: method ?? 'TRANSFER', amount }));
+    await tx(() => invoices.addPayment(issued.id, { paidOn, method: method ?? 'TRANSFER', amount, vatWithheld: '0', taxWithheld: '0' }));
   }
   console.log(issued.number, issued.customer.name, issued.totals.amountDue);
 }
@@ -200,6 +203,52 @@ const source = (await tx(() => invoices.summaries({ state: 'ISSUED' }))).find((s
 const creditNote = await tx(() => invoices.creditNote(source.id));
 const issuedCn = await tx(() => invoices.issue(creditNote.id));
 console.log(issuedCn.number, 'avoir sur', source.number);
+
+// One bank statement for the main workspace, built from the open invoices so that each kind of suggestion shows up.
+{
+  const bank = app.get(BankService);
+  const open = (await tx(() => invoices.summaries({ state: 'ISSUED' }))).filter((s) => s.type === 'INVOICE' && s.paymentStatus === 'UNPAID');
+  const [byNumber, byAmount, byName, toMatch] = [open.slice(0, 5), open.slice(5, 9), open[9], open.slice(10, 12)];
+  const nameOf = async (id: string) => (await tx(() => invoices.get(id))).customer.name.replace(/\s+(SARL|SA|SAS)$/i, '').toUpperCase();
+  const lines: { date: string; label: string; amount: string; reference?: string }[] = [
+    ...byNumber.map((s, i) => ({ date: day(-2 - i), label: `VIR RECU ${s.number} REGLEMENT FACTURE`, amount: s.amountDue })),
+    ...byAmount.map((s, i) => ({ date: day(-3 - i), label: `VIREMENT RECU CLIENT ${1000 + i * 7}`, amount: s.amountDue, reference: `REF${88120 + i}` })),
+    { date: day(-9), label: `VIR ${await nameOf(byName.id)} ACOMPTE TRAVAUX`, amount: '1234.56' },
+    ...toMatch.map((s, i) => ({ date: day(-12 - i), label: `VIR RECU ${s.number}`, amount: s.amountDue })),
+    { date: day(-1), label: 'COMMISSION TENUE DE COMPTE', amount: '-45.00' },
+    { date: day(-4), label: 'FRAIS VIREMENT PERMANENT', amount: '-12.00' },
+    { date: day(-5), label: 'CHEQUE 0001234 FOURNISSEUR PAPETERIE', amount: '-8500.00', reference: '0001234' },
+    { date: day(-6), label: 'PRELEVEMENT CNSS NOVEMBRE', amount: '-12450.00' },
+    { date: day(-7), label: 'LOYER BUREAU NOVEMBRE', amount: '-9000.00' },
+    { date: day(-8), label: 'PAIEMENT FOURNISSEUR SOMAFRAIS', amount: '-3200.00' },
+    { date: day(-10), label: 'ABONNEMENT TELEPHONIE PROFESSIONNELLE', amount: '-690.00' },
+    { date: day(-11), label: 'VIREMENT INTERNE COMPTE EPARGNE', amount: '20000.00' },
+    { date: day(-13), label: 'REMISE CHEQUE 7781234 CLIENT NON IDENTIFIE', amount: '4100.00', reference: '7781234' },
+    { date: day(-14), label: 'VIR RECU DIVERS', amount: '2750.00' },
+    { date: day(-15), label: 'FRAIS DE TENUE DE COMPTE T3', amount: '-135.00' },
+    { date: day(-16), label: 'VIR RECU DIVERS', amount: '2750.00' },
+  ];
+  const imp = await tx(() => bank.importLines({ fileName: 'releve-novembre-2026.csv', accountLabel: 'Attijariwafa 0001', lines }));
+  const found = (await tx(() => bank.list({ importId: imp.id, page: 1, pageSize: 100 }))).items;
+  for (const s of toMatch) {
+    const line = found.find((l) => l.label === `VIR RECU ${s.number}`)!;
+    await tx(() => bank.match(line.id, { method: 'TRANSFER', allocations: [{ invoiceId: s.id, amount: s.amountDue }] }));
+  }
+  await tx(() => bank.setIgnored(found.find((l) => l.label.startsWith('VIREMENT INTERNE'))!.id, true));
+  console.log(`Relevé bancaire: ${imp.lineCount} lignes (${toMatch.length} rapprochées, 1 ignorée)`);
+
+  // Sales that exercise the VAT statement: withholding by customers, a partial payment at 10 %, an exempt sale.
+  const forfait = (price: string, vatRate: string, what: string): LineInput => ({ description: what, quantity: '1', unit: 'forfait', unitPrice: price, discountPercent: '0', vatRate });
+  const sale = async (cust: number, at: number, line: LineInput, pays: { after: number; amount: string; vatWithheld?: string; taxWithheld?: string }[]) => {
+    const d = await tx(() => invoices.create({ type: 'INVOICE', customerId: partyIds[cust], issueDate: day(at), currency: 'MAD', paymentMethod: 'TRANSFER', lines: [line] }));
+    const issued = await tx(() => invoices.issue(d.id));
+    for (const p of pays) await tx(() => invoices.addPayment(issued.id, { paidOn: day(Math.min(at + p.after, 0)), method: 'TRANSFER', amount: p.amount, vatWithheld: p.vatWithheld ?? '0', taxWithheld: p.taxWithheld ?? '0' }));
+  };
+  await sale(7, -25, forfait('37500.00', '20', 'Assistance à la dématérialisation, marché public'), [{ after: 15, amount: '39375.00', vatWithheld: '5625.00' }]);
+  await sale(10, -40, forfait('20000.00', '20', 'Audit de sécurité'), [{ after: 5, amount: '20000.00', vatWithheld: '3000.00', taxWithheld: '1000.00' }]);
+  await sale(9, -12, forfait('8000.00', '0', 'Prestation exportée, exonérée'), [{ after: 9, amount: '8000.00' }]);
+  await sale(1, -30, forfait('6000.00', '10', 'Formation, taux réduit'), [{ after: 10, amount: '3300.00' }]);
+}
 
 await accounts.createTenant({ id: tenant2, name: 'Atelier Zellige Fès SARL' });
 await accounts.addMembership(demoId, tenant2, 'OWNER');
@@ -217,6 +266,7 @@ await tx2(() =>
     tpNumber: '14002233',
     cnssNumber: '7120456',
     vatRegime: 'QUARTERLY',
+    vatBasis: 'CASH',
     vatTaxPoint: 'RECEIPTS',
     phone: '+212 5 35 63 20 18',
     email: 'atelier@zellige-fes.ma',
@@ -245,11 +295,121 @@ for (const [cust, at, lines, paid] of fesPlans) {
   const done = await tx2(() => invoices.issue(d.id));
   if (paid) {
     const amount = new Decimal(done.totals.amountDue).times(paid).toDecimalPlaces(2).toFixed(2);
-    await tx2(() => invoices.addPayment(done.id, { paidOn: day(at + 10), method: 'TRANSFER', amount }));
+    await tx2(() => invoices.addPayment(done.id, { paidOn: day(at + 10), method: 'TRANSFER', amount, vatWithheld: '0', taxWithheld: '0' }));
   }
   console.log(done.number, done.customer.name, done.totals.amountDue, '(Fès)');
 }
 await tx2(() => invoices.create({ type: 'INVOICE', customerId: fesIds[1], issueDate: day(0), currency: 'MAD', paymentMethod: 'TRANSFER', lines: [zellige('12', '720.00', 'Zellige émaillé, terrasse')] }));
+
+// Supplier invoices: suppliers and a spread of purchase invoices in every state, for both workspaces.
+{
+  const purchases = app.get(PurchasesService);
+  type Run = <T>(fn: () => Promise<T>) => Promise<T>;
+  const supplier = (run: Run, name: string, ice: string | undefined, kind: 'SUPPLIER' | 'BOTH', city: string, email?: string) =>
+    run(() => parties.create({ kind, type: 'BUSINESS', name, ...(ice && { ice, ifNumber: ice.slice(2, 10) }), address: addr(`${int(2, 90)} rue de l’Industrie`, city, '20000'), ...(email && { email }) })).then((p) => p.id);
+  const vl = (rate: string, net: string) => ({ vatRate: rate, net, vat: new Decimal(net).times(rate).div(100).toFixed(2) });
+  type Spec = {
+    s: number;
+    cat?: 'GOODS' | 'SERVICES' | 'FIXED_ASSET';
+    at: number;
+    term: number;
+    lines: [rate: string, net: string][];
+    flow: 'paid' | 'partial' | 'unpaid' | 'toApprove' | 'rejected' | 'disputed' | 'fees' | 'feesVat' | 'cash';
+    deductible?: boolean;
+    // Absolute payment day (days from today) when the default is not what the report should show.
+    payAt?: number;
+    desc: string;
+  };
+  const build = async (run: Run, ids: string[], specs: Spec[], prefix: string) => {
+    let n = 0;
+    for (const sp of specs) {
+      const gross = (l: Spec['lines']) => l.reduce((a, [r, net]) => a.plus(net).plus(vl(r, net).vat), new Decimal(0));
+      const p = await run(() =>
+        purchases.create({
+          supplierId: ids[sp.s],
+          number: `${prefix}${String(++n).padStart(4, '0')}`,
+          issueDate: day(sp.at),
+          dueDate: day(sp.at + sp.term),
+          category: sp.cat ?? 'SERVICES',
+          description: sp.desc,
+          vatLines: sp.lines.map(([r, net]) => vl(r, net)),
+          vatDeductible: sp.deductible ?? true,
+        }),
+      );
+      if (sp.flow === 'toApprove') continue;
+      if (sp.flow === 'rejected') {
+        await run(() => purchases.reject(p.id, { reason: 'Doublon : déjà reçue le mois dernier avec un autre numéro.' }));
+        continue;
+      }
+      await run(() => purchases.approve(p.id));
+      const total = gross(sp.lines);
+      const on = (after: number) => day(Math.min(sp.payAt ?? sp.at + after, 0));
+      const pay = (after: number, amount: Decimal.Value, extra: Record<string, string> = {}, method: 'TRANSFER' | 'CASH' | 'CHEQUE' = 'TRANSFER') =>
+        run(() => purchases.addPayment(p.id, { paidOn: on(after), method, amount: new Decimal(amount).toFixed(2), vatWithheld: '0', taxWithheld: '0', ...extra }));
+      const vatTotal = new Decimal(p.totalVat);
+      const net = new Decimal(p.totalNet);
+      if (sp.flow === 'paid') await pay(sp.term - 3, total);
+      else if (sp.flow === 'partial') await pay(sp.term, total.times(0.5));
+      else if (sp.flow === 'disputed') await run(() => purchases.dispute(p.id, { disputed: true }));
+      else if (sp.flow === 'fees') {
+        const vatW = vatTotal.times(0.75);
+        const feeW = net.times(0.1);
+        await pay(sp.term, total.minus(vatW).minus(feeW), { vatWithheld: vatW.toFixed(2), taxWithheld: feeW.toFixed(2), reference: 'VIR RETENUES' });
+      } else if (sp.flow === 'feesVat') {
+        const vatW = vatTotal.times(0.75);
+        await pay(sp.term - 5, total.minus(vatW), { vatWithheld: vatW.toFixed(2), reference: 'VIR RETENUE TVA' });
+      } else if (sp.flow === 'cash') {
+        await pay(5, 4800, { reference: 'ESPECES' }, 'CASH');
+        await pay(5, 4800, { reference: 'ESPECES 2' }, 'CASH');
+      }
+    }
+  };
+
+  const main = [
+    await supplier(tx, 'Maroc Télécom Business', '001245678000022', 'SUPPLIER', 'Rabat', 'entreprises@iam.example.ma'),
+    await supplier(tx, 'Papeterie Centrale SARL', '001934561000077', 'SUPPLIER', 'Casablanca'),
+    await supplier(tx, 'Dell Maroc SA', '000987654000031', 'SUPPLIER', 'Casablanca'),
+    await supplier(tx, 'Cabinet Conseil Idrissi', '002113344000085', 'SUPPLIER', 'Rabat'),
+    await supplier(tx, 'Ateliers Bennis', undefined, 'SUPPLIER', 'Salé'),
+    await supplier(tx, 'Rabat Énergie Services', '001778899000046', 'SUPPLIER', 'Rabat'),
+    await supplier(tx, 'Coopérative Oriental Bio', '001867123000059', 'BOTH', 'Oujda'),
+  ];
+  await build(tx, main, [
+    { s: 0, at: -110, term: 30, lines: [['20', '1250.00']], flow: 'paid', desc: 'Abonnement télécom et internet, juillet' },
+    { s: 0, at: -80, term: 30, lines: [['20', '1250.00']], flow: 'paid', desc: 'Abonnement télécom et internet, août' },
+    { s: 0, at: -50, term: 30, lines: [['20', '1300.00']], flow: 'unpaid', desc: 'Abonnement télécom et internet, septembre' },
+    { s: 1, cat: 'GOODS', at: -100, term: 30, lines: [['20', '840.00']], flow: 'paid', payAt: -12, desc: 'Fournitures de bureau' },
+    { s: 1, cat: 'GOODS', at: -60, term: 45, lines: [['20', '2200.00']], flow: 'partial', desc: 'Papier et consommables d’impression' },
+    { s: 2, cat: 'FIXED_ASSET', at: -90, term: 60, lines: [['20', '28000.00']], flow: 'partial', desc: 'Dix ordinateurs portables' },
+    { s: 2, cat: 'FIXED_ASSET', at: -30, term: 150, lines: [['20', '12500.00']], flow: 'toApprove', desc: 'Serveur de sauvegarde' },
+    { s: 3, at: -95, term: 30, lines: [['20', '8000.00']], flow: 'fees', payAt: -18, desc: 'Mission de conseil juridique' },
+    { s: 3, at: -65, term: 30, lines: [['20', '6000.00']], flow: 'fees', desc: 'Audit des contrats clients' },
+    { s: 3, at: -20, term: 30, lines: [['20', '5000.00']], flow: 'toApprove', desc: 'Assistance à la rédaction des CGV' },
+    { s: 4, cat: 'GOODS', at: -70, term: 30, lines: [['20', '1000.00'], ['10', '400.00']], flow: 'unpaid', desc: 'Travaux d’aménagement et petit matériel' },
+    { s: 4, cat: 'GOODS', at: -40, term: 30, lines: [['0', '3000.00']], flow: 'paid', desc: 'Matériel exonéré' },
+    { s: 4, at: -5, term: 45, lines: [['20', '600.00']], flow: 'unpaid', desc: 'Entretien des locaux' },
+    { s: 5, cat: 'GOODS', at: -55, term: 30, lines: [['20', '12000.00']], flow: 'cash', desc: 'Groupe électrogène et installation' },
+    { s: 5, at: -45, term: 30, lines: [['20', '3000.00']], flow: 'unpaid', desc: 'Contrat de maintenance électrique' },
+    { s: 6, cat: 'GOODS', at: -35, term: 30, lines: [['10', '5000.00']], flow: 'disputed', desc: 'Produits bio pour la cafétéria' },
+    { s: 1, cat: 'GOODS', at: -25, term: 30, lines: [['20', '450.00']], flow: 'rejected', desc: 'Fournitures de bureau (doublon)' },
+    { s: 1, at: -15, term: 30, lines: [['20', '700.00']], flow: 'unpaid', deductible: false, desc: 'Cadeaux clients, TVA non récupérable' },
+    { s: 0, at: -20, term: 30, lines: [['20', '1250.00']], flow: 'paid', payAt: -5, desc: 'Abonnement télécom et internet, novembre' },
+    { s: 1, cat: 'GOODS', at: -25, term: 30, lines: [['20', '900.00']], flow: 'paid', payAt: -10, desc: 'Cartouches et classeurs' },
+    { s: 4, cat: 'GOODS', at: -100, term: 30, lines: [['20', '1500.00']], flow: 'unpaid', desc: 'Mobilier de bureau (impayé depuis plus de 60 jours)' },
+    { s: 2, cat: 'GOODS', at: -150, term: 200, lines: [['20', '7000.00']], flow: 'unpaid', desc: 'Licences et écrans, délai convenu de 200 jours' },
+  ], 'ACH-');
+  console.log(`Factures d’achat: 22 (${main.length} fournisseurs, dont un sans ICE et un client-fournisseur), 3 à Fès`);
+
+  const fes = [
+    await supplier(tx2, 'Argile et Émaux du Rif', '002001122000093', 'SUPPLIER', 'Nador'),
+    await supplier(tx2, 'Transports Chaouia', undefined, 'SUPPLIER', 'Fès'),
+  ];
+  await build(tx2, fes, [
+    { s: 0, cat: 'GOODS', at: -60, term: 30, lines: [['20', '9000.00']], flow: 'paid', desc: 'Argile et émaux, lot d’automne' },
+    { s: 1, at: -20, term: 30, lines: [['20', '1500.00']], flow: 'toApprove', desc: 'Livraison de carreaux, Marrakech' },
+    { s: 0, cat: 'GOODS', at: -35, term: 30, lines: [['20', '4200.00']], flow: 'partial', desc: 'Pigments et colles' },
+  ], 'F-');
+}
 
 console.log(`\nDemo accounts (password ${demo.password}):\n  ${demo.email} (OWNER, also OWNER of Atelier Zellige Fès SARL)\n  ${team.map((m) => `${m.email} (${m.role})`).join('\n  ')}`);
 

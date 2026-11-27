@@ -19,7 +19,7 @@ import {
 } from '@facture/core';
 import { Decimal } from 'decimal.js';
 import { and, asc, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
-import { companies, invoiceDeliveries, invoices, numberingSequences, parties, payments } from '../db/schema.js';
+import { bankTransactions, companies, invoiceDeliveries, invoices, numberingSequences, parties, payments } from '../db/schema.js';
 import { TenantDb } from '../db/tenant-db.js';
 import { conflict, invalid, notFound } from '../common/errors.js';
 import { dto, money, today } from '../common/util.js';
@@ -27,7 +27,9 @@ import { dto, money, today } from '../common/util.js';
 type Row = typeof invoices.$inferSelect;
 type PaymentRow = typeof payments.$inferSelect;
 
-const sumOf = (rows: { amount: string }[]) => rows.reduce((s, p) => s.plus(p.amount), new Decimal(0));
+// What a payment settles: the cash plus what the customer withheld for the Treasury.
+const settledOf = (p: { amount: string; vatWithheld: string; taxWithheld: string }) => new Decimal(p.amount).plus(p.vatWithheld).plus(p.taxWithheld);
+const sumOf = (rows: { amount: string; vatWithheld: string; taxWithheld: string }[]) => rows.reduce((s, p) => s.plus(settledOf(p)), new Decimal(0));
 
 @Injectable()
 export class InvoicesService {
@@ -194,7 +196,7 @@ export class InvoicesService {
       .orderBy(desc(invoices.issueDate), desc(invoices.createdAt))
       .limit(limit ?? 1_000_000);
     const sums = await this.tx
-      .select({ invoiceId: payments.invoiceId, paid: sql<string>`sum(${payments.amount})` })
+      .select({ invoiceId: payments.invoiceId, paid: sql<string>`sum(${payments.amount} + ${payments.vatWithheld} + ${payments.taxWithheld})` })
       .from(payments)
       .where(isNull(payments.voidedAt))
       .groupBy(payments.invoiceId);
@@ -339,7 +341,7 @@ export class InvoicesService {
     return buildUbl({ company: invoice.seller!, invoice, originalNumber });
   }
 
-  async addPayment(id: string, input: PaymentInput): Promise<Invoice> {
+  async addPayment(id: string, input: PaymentInput, bankTransactionId?: string): Promise<Invoice> {
     const row = await this.lock(id);
     if (row.state !== 'ISSUED' || row.type === 'CREDIT_NOTE') {
       throw conflict('Un paiement ne peut être enregistré que sur une facture émise.');
@@ -347,19 +349,19 @@ export class InvoicesService {
     const existing = await this.tx.select().from(payments).where(and(eq(payments.invoiceId, id), isNull(payments.voidedAt)));
     const remaining = new Decimal(row.amountDue).minus(sumOf(existing));
     const amount = new Decimal(input.amount);
-    if (amount.lte(0)) {
-      throw invalid('Montant invalide.', [
-        { path: 'amount', rule: 'PAYMENT-POSITIVE', message: 'Le montant doit être supérieur à zéro.' },
-      ]);
+    const vat = new Decimal(input.vatWithheld);
+    const tax = new Decimal(input.taxWithheld);
+    const bad = (path: string, rule: string, message: string) => invalid('Montant invalide.', [{ path, rule, message }]);
+    if (vat.lt(0)) throw bad('vatWithheld', 'PAYMENT-NEGATIVE', 'La retenue ne peut pas être négative.');
+    if (tax.lt(0)) throw bad('taxWithheld', 'PAYMENT-NEGATIVE', 'La retenue ne peut pas être négative.');
+    if (amount.lt(0) || amount.plus(vat).plus(tax).lte(0)) {
+      throw bad('amount', 'PAYMENT-POSITIVE', 'Le montant doit être supérieur à zéro.');
     }
-    if (amount.gt(remaining)) {
-      throw invalid('Montant invalide.', [
-        {
-          path: 'amount',
-          rule: 'PAYMENT-EXCEEDS',
-          message: `Le montant dépasse le reste à payer (${money(remaining)}).`,
-        },
-      ]);
+    const settled = amount.plus(vat).plus(tax);
+    if (settled.gt(remaining)) throw bad('amount', 'PAYMENT-EXCEEDS', `Le montant dépasse le reste à payer (${money(remaining)}).`);
+    const vatLeft = new Decimal(row.totalVat).minus(existing.reduce((a, p) => a.plus(p.vatWithheld), new Decimal(0)));
+    if (vat.gt(vatLeft)) {
+      throw bad('vatWithheld', 'PAYMENT-VAT-EXCEEDS', `La retenue de TVA dépasse la TVA de la facture non encore retenue (${money(vatLeft)}).`);
     }
     await this.tx.insert(payments).values({
       tenantId: this.t.tenantId,
@@ -367,7 +369,10 @@ export class InvoicesService {
       paidOn: input.paidOn,
       method: input.method,
       amount: money(amount),
+      vatWithheld: money(vat),
+      taxWithheld: money(tax),
       reference: input.reference ?? null,
+      bankTransactionId: bankTransactionId ?? null,
     });
     return this.get(id);
   }
@@ -383,6 +388,16 @@ export class InvoicesService {
       .update(payments)
       .set({ voidedAt: new Date(), voidedBy: this.t.ctx.userId ?? null })
       .where(eq(payments.id, paymentId));
+    // A bank line whose payments are all void is no longer matched.
+    if (p.bankTransactionId) {
+      const left = await this.tx.$count(payments, and(eq(payments.bankTransactionId, p.bankTransactionId), isNull(payments.voidedAt)));
+      if (left === 0) {
+        await this.tx
+          .update(bankTransactions)
+          .set({ status: 'UNMATCHED' })
+          .where(and(eq(bankTransactions.id, p.bankTransactionId), eq(bankTransactions.status, 'MATCHED')));
+      }
+    }
     return this.get(p.invoiceId);
   }
 }

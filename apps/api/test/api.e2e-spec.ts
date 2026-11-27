@@ -1143,7 +1143,8 @@ describe('accounts: seeded team and closure', () => {
     await accountant.agent.post('/v1/parties').send(customerBody).expect(403);
     const fes = owner.me.memberships.find((m: { tenantName: string }) => m.tenantName.startsWith('Atelier')).tenantId;
     await owner.agent.post('/v1/auth/switch-tenant').send({ tenantId: fes }).expect(200);
-    expect((await owner.agent.get('/v1/parties').expect(200)).body).toHaveLength(3);
+    expect((await owner.agent.get('/v1/parties?kind=CUSTOMER').expect(200)).body).toHaveLength(3);
+    expect((await owner.agent.get('/v1/purchases').expect(200)).body.total).toBe(3);
     expect((await owner.agent.get('/v1/invoices').expect(200)).body).toHaveLength(5);
   }, 120_000);
 });
@@ -1710,5 +1711,1015 @@ describe('team: tables are protected', () => {
     } finally {
       client.release();
     }
+  });
+});
+
+describe('bank import and reconciliation', () => {
+  const none = '00000000-0000-4000-8000-000000000000';
+  const importBody = (lines: { date?: string; label: string; amount: string; reference?: string }[], fileName = 'releve.csv') => ({
+    fileName,
+    accountLabel: 'Compte 1',
+    lines: lines.map((l) => ({ date: '2026-11-10', ...l })),
+  });
+  const bankSetup = async () => {
+    const o = await ownerWithCompany();
+    const customer = async (name: string) =>
+      (await o.agent.post('/v1/parties').send({ ...customerBody, name }).expect(201)).body.id as string;
+    const invoiceFor = async (customerId: string, qty = '1', issue = true) => {
+      const d = (await o.agent.post('/v1/invoices').send({ customerId, issueDate: '2026-03-10', lines: [{ ...line, quantity: qty }] }).expect(201)).body;
+      return issue ? (await o.agent.post(`/v1/invoices/${d.id}/issue`).expect(200)).body : d;
+    };
+    const imp = async (lines: Parameters<typeof importBody>[0], fileName?: string) =>
+      (await o.agent.post('/v1/bank/imports').send(importBody(lines, fileName)).expect(201)).body;
+    const lines = async (query = '') => (await o.agent.get(`/v1/bank/transactions${query}`).expect(200)).body;
+    const lineOf = async (label: string) => (await lines()).items.find((l: { label: string }) => l.label === label);
+    return { ...o, customer, invoiceFor, imp, lines, lineOf };
+  };
+  const invoiceOf = async (agent: ReturnType<typeof request>, id: string) => (await agent.get(`/v1/invoices/${id}`).expect(200)).body;
+
+  it('imports lines, keeps duplicates inside a file and skips those of earlier imports', async () => {
+    const b = await bankSetup();
+    const first = await b.imp(
+      [
+        { label: 'VIR  ATLAS', amount: '1500.00' },
+        { label: 'VIR ATLAS', amount: '1500' },
+        { label: 'FRAIS', amount: '-12.50', reference: 'R1' },
+      ],
+      'a.csv',
+    );
+    expect(first).toMatchObject({ fileName: 'a.csv', accountLabel: 'Compte 1', lineCount: 3, duplicateCount: 0, matchedCount: 0, importedByName: 'Test User' });
+    const second = await b.imp(
+      [
+        { label: ' VIR ATLAS ', amount: '1500.0' },
+        { label: 'FRAIS', amount: '-12.50', reference: 'R1' },
+        { label: 'FRAIS', amount: '-12.50' },
+        { label: 'NOUVEAU', amount: '10' },
+        { label: 'NOUVEAU', amount: '10.00' },
+        { date: '2026-11-11', label: 'VIR ATLAS', amount: '1500' },
+      ],
+      'b.csv',
+    );
+    expect([second.lineCount, second.duplicateCount]).toEqual([4, 2]);
+    expect((await b.lines()).total).toBe(7);
+    const list = (await b.agent.get('/v1/bank/imports').expect(200)).body;
+    expect(list.map((i: { fileName: string }) => i.fileName)).toEqual(['b.csv', 'a.csv']);
+    const all = await b.imp([{ label: 'VIR ATLAS', amount: '1500' }, { label: 'NOUVEAU', amount: '10' }], 'c.csv');
+    expect([all.lineCount, all.duplicateCount]).toEqual([0, 2]);
+    expect((await b.agent.post('/v1/bank/imports').send({ fileName: 'x', lines: [] })).status).toBe(422);
+    expect((await b.agent.post('/v1/bank/imports').send(importBody([{ label: '   ', amount: '1' }]))).status).toBe(422);
+    expect((await events(b.me.tenant.id, 'bank.imported')).length).toBe(3);
+  });
+
+  it('lists with filters, search, pagination and workspace counts', async () => {
+    const b = await bankSetup();
+    const i1 = await b.imp(Array.from({ length: 5 }, (_, n) => ({ date: `2026-11-0${n + 1}`, label: `LIGNE ${n}`, amount: `${10 + n}` })), 'one.csv');
+    await b.imp([{ label: 'AUTRE CHOSE', amount: '-5', reference: 'ZZ-REF' }, { label: 'LIGNE X', amount: '-6' }], 'two.csv');
+    const l0 = await b.lineOf('LIGNE 0');
+    await b.agent.post(`/v1/bank/transactions/${l0.id}/ignore`).expect(200);
+    const page1 = await b.lines('?pageSize=3');
+    expect(page1.items).toHaveLength(3);
+    expect(page1.total).toBe(7);
+    expect(page1.counts).toEqual({ UNMATCHED: 6, MATCHED: 0, IGNORED: 1 });
+    expect(page1.items.map((l: { date: string }) => l.date)).toEqual(['2026-11-10', '2026-11-10', '2026-11-05']);
+    expect((await b.lines('?pageSize=3&page=3')).items).toHaveLength(1);
+    const ign = await b.lines('?status=IGNORED');
+    expect([ign.total, ign.items.length, ign.counts.UNMATCHED]).toEqual([1, 1, 6]);
+    const q = await b.lines('?q=ligne&status=UNMATCHED');
+    expect(q.total).toBe(5);
+    expect(q.counts).toEqual({ UNMATCHED: 5, MATCHED: 0, IGNORED: 1 });
+    expect((await b.lines('?q=zz-ref')).items.map((l: { label: string }) => l.label)).toEqual(['AUTRE CHOSE']);
+    expect((await b.lines('?q=100%25')).total).toBe(0);
+    const scoped = await b.lines(`?importId=${i1.id}`);
+    expect([scoped.total, scoped.counts.IGNORED]).toEqual([5, 1]);
+    for (const bad of ['?status=NOPE', '?page=0', '?pageSize=101', '?pageSize=abc']) expect((await b.agent.get(`/v1/bank/transactions${bad}`)).status).toBe(422);
+  });
+
+  it('suggests open invoices: number, amount, customer, best first, at most five', async () => {
+    const b = await bankSetup();
+    const c1 = await b.customer('Zenith Ouest SARL');
+    const c2 = await b.customer('Boulangerie Najma');
+    const byNumber = await b.invoiceFor(c1, '1');
+    const byAmount = await b.invoiceFor(c2, '3');
+    const both = await b.invoiceFor(c2, '5');
+    const credit = (await b.agent.post(`/v1/invoices/${byNumber.id}/credit-note`).expect(201)).body;
+    await b.invoiceFor(c1, '9', false);
+    await b.imp([
+      { label: `vir recu ${byNumber.number.replace(/-/g, ' ').toLowerCase()}`, amount: '1.00' },
+      { label: 'VIR DIVERS', amount: byAmount.totals.amountDue },
+      { label: `PAIEMENT ${both.number} ZENITH-OUEST`, amount: both.totals.amountDue },
+      { label: 'VIR ZENITH OUEST', amount: '3.00' },
+      { label: 'VIR INCONNU', amount: '3.33' },
+      { label: `SORTIE ${byNumber.number}`, amount: '-1200' },
+    ]);
+    const sug = async (label: string) => (await b.lineOf(label)).suggestions;
+    const n = await sug(`vir recu ${byNumber.number.replace(/-/g, ' ').toLowerCase()}`);
+    expect(n.map((s: { number: string; reasons: string[] }) => [s.number, s.reasons])).toEqual([[byNumber.number, ['NUMBER']]]);
+    expect(n[0]).toMatchObject({ customerName: 'Zenith Ouest SARL', dueDate: byNumber.dueDate, amountDue: byNumber.totals.amountDue });
+    const a = await sug('VIR DIVERS');
+    expect(a.map((s: { number: string }) => s.number)).toEqual([byAmount.number]);
+    expect(a[0].reasons).toEqual(['AMOUNT']);
+    const combo = await sug(`PAIEMENT ${both.number} ZENITH-OUEST`);
+    expect(combo.map((s: { number: string; reasons: string[] }) => [s.number, s.reasons.join('+')])).toEqual([
+      [both.number, 'NUMBER+AMOUNT'],
+      [byNumber.number, 'CUSTOMER'],
+    ]);
+    expect((await sug('VIR ZENITH OUEST')).map((s: { reasons: string[] }) => s.reasons)).toEqual([['CUSTOMER']]);
+    expect(await sug('VIR INCONNU')).toEqual([]);
+    expect(await sug(`SORTIE ${byNumber.number}`)).toEqual([]);
+    expect(credit.number).toBeNull();
+
+    const c3 = await b.customer('Pharmacie Hassan');
+    for (let i = 0; i < 7; i++) await b.invoiceFor(c3, String(i + 1));
+    await b.imp([{ label: 'VIR PHARMACIE HASSAN', amount: '5' }]);
+    expect((await sug('VIR PHARMACIE HASSAN')).length).toBe(5);
+    await b.agent.post(`/v1/bank/transactions/${(await b.lineOf('VIR INCONNU')).id}/ignore`).expect(200);
+    expect(((await b.lineOf('VIR INCONNU')) as { suggestions: unknown[] }).suggestions).toEqual([]);
+  });
+
+  it('matches one or several invoices, partly allocated, and the invoices and dashboard follow', async () => {
+    const b = await bankSetup();
+    const c = await b.customer('Client Banque');
+    const i1 = await b.invoiceFor(c, '1');
+    const i2 = await b.invoiceFor(c, '2');
+    await b.imp([
+      { date: '2026-11-12', label: 'VIR CLIENT BANQUE', amount: '3600.00', reference: 'REF-77' },
+      { date: '2026-11-13', label: 'VIR FACTURE', amount: '1200.00' },
+    ]);
+    const before = (await b.agent.get('/v1/dashboard').expect(200)).body;
+    const line = await b.lineOf('VIR CLIENT BANQUE');
+    const res = await b.agent
+      .post(`/v1/bank/transactions/${line.id}/match`)
+      .send({ method: 'CHEQUE', allocations: [{ invoiceId: i1.id, amount: i1.totals.amountDue }, { invoiceId: i2.id, amount: '2000' }] })
+      .expect(200);
+    expect(res.body.status).toBe('MATCHED');
+    expect(res.body.suggestions).toEqual([]);
+    expect(res.body.allocations.map((a: { amount: string }) => a.amount).sort()).toEqual(['1200.00', '2000.00']);
+    expect(res.body.allocations[0]).toMatchObject({ customerName: 'Client Banque' });
+    const paid1 = await invoiceOf(b.agent as never, i1.id);
+    expect(paid1.paymentStatus).toBe('PAID');
+    expect(paid1.payments[0]).toMatchObject({ paidOn: '2026-11-12', method: 'CHEQUE', reference: 'REF-77', amount: '1200.00' });
+    expect(Object.keys(paid1.payments[0]).sort()).toEqual(['amount', 'id', 'invoiceId', 'method', 'paidOn', 'reference', 'taxWithheld', 'vatWithheld']);
+    const paid2 = await invoiceOf(b.agent as never, i2.id);
+    expect([paid2.paymentStatus, paid2.paidAmount]).toEqual(['PARTIALLY_PAID', '2000.00']);
+    const after = (await b.agent.get('/v1/dashboard').expect(200)).body;
+    expect(new Decimal(before.outstanding).minus(after.outstanding).toFixed(2)).toBe('3200.00');
+    expect((await b.agent.get('/v1/bank/imports').expect(200)).body[0].matchedCount).toBe(1);
+    expect((await b.lines()).counts).toEqual({ UNMATCHED: 1, MATCHED: 1, IGNORED: 0 });
+
+    const l2 = await b.lineOf('VIR FACTURE');
+    await b.agent.post(`/v1/bank/transactions/${l2.id}/match`).send({ allocations: [{ invoiceId: i2.id, amount: '400.00' }] }).expect(200);
+    expect((await invoiceOf(b.agent as never, i2.id)).payments.at(-1).reference).toBe('VIR FACTURE');
+    expect((await events(b.me.tenant.id, 'bank.matched')).length).toBe(2);
+    expect((await events(b.me.tenant.id, 'payment.recorded')).length).toBe(3);
+  });
+
+  it('refuses what cannot be matched', async () => {
+    const b = await bankSetup();
+    const c = await b.customer('Client Refus');
+    const inv = await b.invoiceFor(c, '1');
+    const draft = await b.invoiceFor(c, '1', false);
+    const credit = (await b.agent.post(`/v1/invoices/${inv.id}/credit-note`).expect(201)).body;
+    const creditIssued = (await b.agent.post(`/v1/invoices/${credit.id}/issue`).expect(200)).body;
+    const other = await bankSetup();
+    const oc = await other.customer('Autre');
+    const foreign = await other.invoiceFor(oc, '1');
+    await b.imp([
+      { label: 'IN', amount: '5000.00' },
+      { label: 'OUT', amount: '-100.00' },
+      { label: 'SMALL', amount: '500.00' },
+    ]);
+    const post = async (label: string, allocations: unknown[]) => {
+      const l = await b.lineOf(label);
+      return b.agent.post(`/v1/bank/transactions/${l.id}/match`).send({ allocations });
+    };
+    const out = await post('OUT', [{ invoiceId: inv.id, amount: '10' }]);
+    expect([out.status, out.body.code]).toEqual([409, 'NOT_MATCHABLE']);
+    const over = await post('IN', [{ invoiceId: inv.id, amount: '1200.01' }]);
+    expect([over.status, over.body.code]).toEqual([409, 'OVERPAYMENT']);
+    const twice = await post('IN', [{ invoiceId: inv.id, amount: '1000' }, { invoiceId: inv.id, amount: '300' }]);
+    expect([twice.status, twice.body.code]).toEqual([409, 'OVERPAYMENT']);
+    expect((await invoiceOf(b.agent as never, inv.id)).payments).toEqual([]);
+    expect((await post('SMALL', [{ invoiceId: inv.id, amount: '400' }, { invoiceId: inv.id, amount: '200' }])).status).toBe(422);
+    expect((await post('IN', [{ invoiceId: inv.id, amount: '0' }])).status).toBe(422);
+    expect((await post('IN', [])).status).toBe(422);
+    expect((await post('IN', [{ invoiceId: draft.id, amount: '10' }])).status).toBe(409);
+    expect((await post('IN', [{ invoiceId: creditIssued.id, amount: '10' }])).status).toBe(409);
+    expect((await post('IN', [{ invoiceId: foreign.id, amount: '10' }])).status).toBe(404);
+    expect((await post('IN', [{ invoiceId: none, amount: '10' }])).status).toBe(404);
+    expect((await b.lineOf('IN')).status).toBe('UNMATCHED');
+    await b.agent.post(`/v1/bank/transactions/${none}/match`).send({ allocations: [{ invoiceId: inv.id, amount: '1' }] }).expect(404);
+
+    expect((await post('IN', [{ invoiceId: inv.id, amount: '1200' }])).status).toBe(200);
+    const again = await post('IN', [{ invoiceId: inv.id, amount: '1' }]);
+    expect([again.status, again.body.code]).toEqual([409, 'NOT_MATCHABLE']);
+    const ign = await b.agent.post(`/v1/bank/transactions/${(await b.lineOf('SMALL')).id}/ignore`).expect(200);
+    expect((await post('SMALL', [{ invoiceId: inv.id, amount: '1' }])).body.code).toBe('NOT_MATCHABLE');
+    expect(ign.body.status).toBe('IGNORED');
+  });
+
+  it('lets exactly one of two concurrent matches through', async () => {
+    const b = await bankSetup();
+    const c = await b.customer('Client Course');
+    const i1 = await b.invoiceFor(c, '1');
+    const i2 = await b.invoiceFor(c, '1');
+    await b.imp([{ label: 'COURSE', amount: '2400.00' }]);
+    const l = await b.lineOf('COURSE');
+    const [x, y] = await Promise.all([
+      b.agent.post(`/v1/bank/transactions/${l.id}/match`).send({ allocations: [{ invoiceId: i1.id, amount: '1200' }] }),
+      b.agent.post(`/v1/bank/transactions/${l.id}/match`).send({ allocations: [{ invoiceId: i2.id, amount: '1200' }] }),
+    ]);
+    expect([x.status, y.status].sort()).toEqual([200, 409]);
+    const n = (await admin.query('select count(*)::int n from payments where bank_transaction_id = $1', [l.id])).rows[0].n;
+    expect(n).toBe(1);
+  });
+
+  it('unmatches by voiding the payments, and a manual void frees the line too', async () => {
+    const b = await bankSetup();
+    const c = await b.customer('Client Annulation');
+    const i1 = await b.invoiceFor(c, '1');
+    const i2 = await b.invoiceFor(c, '1');
+    await b.imp([{ label: 'A ANNULER', amount: '2400.00' }, { label: 'MANUEL', amount: '1200.00' }]);
+    const l = await b.lineOf('A ANNULER');
+    await b.agent.post(`/v1/bank/transactions/${l.id}/match`).send({ allocations: [{ invoiceId: i1.id, amount: '1200' }, { invoiceId: i2.id, amount: '700' }] }).expect(200);
+    const dash = (await b.agent.get('/v1/dashboard').expect(200)).body.outstanding;
+    const un = await b.agent.post(`/v1/bank/transactions/${l.id}/unmatch`).expect(200);
+    expect([un.body.status, un.body.allocations]).toEqual(['UNMATCHED', []]);
+    for (const i of [i1, i2]) {
+      const inv = await invoiceOf(b.agent as never, i.id);
+      expect([inv.paymentStatus, inv.paidAmount, inv.payments]).toEqual(['UNPAID', '0.00', []]);
+    }
+    expect(new Decimal((await b.agent.get('/v1/dashboard').expect(200)).body.outstanding).minus(dash).toFixed(2)).toBe('1900.00');
+    expect((await b.agent.post(`/v1/bank/transactions/${l.id}/unmatch`)).status).toBe(409);
+    expect((await events(b.me.tenant.id, 'bank.unmatched')).length).toBe(1);
+    expect((await events(b.me.tenant.id, 'payment.voided')).length).toBe(2);
+    await b.agent.post(`/v1/bank/transactions/${l.id}/match`).send({ allocations: [{ invoiceId: i1.id, amount: '1200' }] }).expect(200);
+
+    const m = await b.lineOf('MANUEL');
+    const matched = (await b.agent.post(`/v1/bank/transactions/${m.id}/match`).send({ allocations: [{ invoiceId: i2.id, amount: '1200' }] }).expect(200)).body;
+    await b.agent.delete(`/v1/payments/${matched.allocations[0].paymentId}`).expect(200);
+    expect((await b.lineOf('MANUEL')).status).toBe('UNMATCHED');
+  });
+
+  it('ignores and unignores, only from the right state', async () => {
+    const b = await bankSetup();
+    const c = await b.customer('Client Etat');
+    const inv = await b.invoiceFor(c, '1');
+    await b.imp([{ label: 'FRAIS BANQUE', amount: '-30' }, { label: 'REGLEMENT', amount: '1200.00' }]);
+    const fees = await b.lineOf('FRAIS BANQUE');
+    expect((await b.agent.post(`/v1/bank/transactions/${fees.id}/unignore`)).status).toBe(409);
+    expect((await b.agent.post(`/v1/bank/transactions/${fees.id}/ignore`).expect(200)).body.status).toBe('IGNORED');
+    expect((await b.agent.post(`/v1/bank/transactions/${fees.id}/ignore`)).status).toBe(409);
+    expect((await b.agent.post(`/v1/bank/transactions/${fees.id}/unignore`).expect(200)).body.status).toBe('UNMATCHED');
+    const pay = await b.lineOf('REGLEMENT');
+    await b.agent.post(`/v1/bank/transactions/${pay.id}/match`).send({ allocations: [{ invoiceId: inv.id, amount: '1200' }] }).expect(200);
+    expect((await b.agent.post(`/v1/bank/transactions/${pay.id}/ignore`)).status).toBe(409);
+    expect((await b.agent.post(`/v1/bank/transactions/${pay.id}/unignore`)).status).toBe(409);
+    expect((await events(b.me.tenant.id, 'bank.ignored')).length).toBe(2);
+  });
+
+  it('deletes an import unless a line is matched', async () => {
+    const b = await bankSetup();
+    const c = await b.customer('Client Suppression');
+    const inv = await b.invoiceFor(c, '1');
+    const free = await b.imp([{ label: 'LIBRE', amount: '1' }], 'libre.csv');
+    const used = await b.imp([{ label: 'UTILISEE', amount: '1200.00' }, { label: 'AUTRE', amount: '3' }], 'utilisee.csv');
+    await b.agent.delete(`/v1/bank/imports/${free.id}`).expect(204);
+    expect((await b.lineOf('LIBRE'))).toBeUndefined();
+    const l = await b.lineOf('UTILISEE');
+    await b.agent.post(`/v1/bank/transactions/${l.id}/match`).send({ allocations: [{ invoiceId: inv.id, amount: '1200' }] }).expect(200);
+    const refused = await b.agent.delete(`/v1/bank/imports/${used.id}`);
+    expect([refused.status, refused.body.code]).toEqual([409, 'HAS_MATCHES']);
+    expect((await b.lines()).total).toBe(2);
+    await b.agent.post(`/v1/bank/transactions/${l.id}/unmatch`).expect(200);
+    await b.agent.delete(`/v1/bank/imports/${used.id}`).expect(204);
+    await b.agent.delete(`/v1/bank/imports/${used.id}`).expect(404);
+    expect((await b.lines()).total).toBe(0);
+    expect((await invoiceOf(b.agent as never, inv.id)).payments).toEqual([]);
+    expect((await events(b.me.tenant.id, 'bank.import_deleted')).length).toBe(2);
+  });
+
+  it('applies the role table', async () => {
+    const body = importBody([{ label: 'X', amount: '1' }]);
+    const rows: [string, (a: ReturnType<typeof request>) => Promise<{ status: number }>, string[]][] = [
+      ['read lines', (a) => a.get('/v1/bank/transactions'), ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER']],
+      ['read imports', (a) => a.get('/v1/bank/imports'), ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER']],
+      ['import', (a) => a.post('/v1/bank/imports').send(body), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['match', (a) => a.post(`/v1/bank/transactions/${none}/match`).send({ allocations: [{ invoiceId: none, amount: '1' }] }), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['ignore', (a) => a.post(`/v1/bank/transactions/${none}/ignore`), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['unignore', (a) => a.post(`/v1/bank/transactions/${none}/unignore`), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['unmatch', (a) => a.post(`/v1/bank/transactions/${none}/unmatch`), ['OWNER', 'ADMIN']],
+      ['delete import', (a) => a.delete(`/v1/bank/imports/${none}`), ['OWNER', 'ADMIN']],
+    ];
+    for (const role of ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER'] as const) {
+      const r = await asRole(role);
+      for (const [name, call, allowed] of rows) {
+        const status = (await call(r.agent as never)).status;
+        expect({ role, name, forbidden: status === 403 }, `${role} ${name} -> ${status}`).toEqual({ role, name, forbidden: !allowed.includes(role) });
+      }
+    }
+  });
+
+  it('keeps workspaces apart', async () => {
+    const a = await bankSetup();
+    const b = await bankSetup();
+    const imp = await a.imp([{ label: 'SECRET A', amount: '99.00' }]);
+    const line = await a.lineOf('SECRET A');
+    expect((await b.lines()).total).toBe(0);
+    expect((await b.agent.get('/v1/bank/imports').expect(200)).body).toEqual([]);
+    expect((await b.lines(`?importId=${imp.id}`)).total).toBe(0);
+    await b.agent.post(`/v1/bank/transactions/${line.id}/ignore`).expect(404);
+    await b.agent.delete(`/v1/bank/imports/${imp.id}`).expect(404);
+    const same = await b.imp([{ label: 'SECRET A', amount: '99.00' }]);
+    expect(same.duplicateCount).toBe(0);
+  });
+
+  it('removes bank data when a workspace closes and keeps the payments', async () => {
+    const b = await bankSetup();
+    const c = await b.customer('Client Fermeture');
+    const inv = await b.invoiceFor(c, '1');
+    await b.imp([{ label: 'REGLEMENT FERMETURE', amount: '1200.00' }, { label: 'RESTE', amount: '5' }]);
+    const l = await b.lineOf('REGLEMENT FERMETURE');
+    await b.agent.post(`/v1/bank/transactions/${l.id}/match`).send({ allocations: [{ invoiceId: inv.id, amount: '1200' }] }).expect(200);
+    const tenant = b.me.tenant.id as string;
+    await b.agent.post('/v1/tenant/close').send({ password: PASSWORD, confirmName: 'Société Test' }).expect(204);
+    for (const t of ['bank_transactions', 'bank_imports']) {
+      expect((await admin.query(`select 1 from ${t} where tenant_id = $1`, [tenant])).rowCount, t).toBe(0);
+    }
+    const kept = (await admin.query('select bank_transaction_id, amount::text from payments where tenant_id = $1 and voided_at is null', [tenant])).rows;
+    expect(kept).toEqual([{ bank_transaction_id: l.id, amount: '1200.00' }]);
+  });
+
+  it('forces RLS on the bank tables', async () => {
+    const { rows } = await admin.query(`
+      select c.relname, c.relrowsecurity, c.relforcerowsecurity,
+        (select count(*)::int from pg_policies p where p.schemaname = 'public' and p.tablename = c.relname) as policies
+      from pg_class c where c.relname in ('bank_imports', 'bank_transactions')`);
+    expect(rows.map((r) => r.relname).sort()).toEqual(['bank_imports', 'bank_transactions']);
+    for (const r of rows) expect([r.relrowsecurity, r.relforcerowsecurity, r.policies > 0]).toEqual([true, true, true]);
+  });
+});
+
+describe('purchase invoices', () => {
+  const none = '00000000-0000-4000-8000-000000000000';
+  const dayOff = (n: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return d.toLocaleDateString('en-CA');
+  };
+  const vat = (rate: string, net: string) => ({ vatRate: rate, net, vat: new Decimal(net).times(rate).div(100).toFixed(2) });
+  const setupP = async () => {
+    const o = await ownerWithCompany();
+    const supplier = async (extra: Record<string, unknown> = {}, name = `Fournisseur ${Math.random().toString(36).slice(2, 7)}`) =>
+      (await o.agent.post('/v1/parties').send({ ...customerBody, kind: 'SUPPLIER', name, ifNumber: '12345678', ...extra }).expect(201)).body;
+    const sup = await supplier();
+    let n = 0;
+    const body = (over: Record<string, unknown> = {}) => ({
+      supplierId: sup.id,
+      number: `F-${++n}-${Math.random().toString(36).slice(2, 6)}`,
+      issueDate: '2026-09-01',
+      dueDate: '2026-10-01',
+      category: 'SERVICES',
+      description: 'Prestation',
+      vatLines: [vat('20', '1000.00')],
+      vatDeductible: true,
+      ...over,
+    });
+    const make = async (over: Record<string, unknown> = {}) => (await o.agent.post('/v1/purchases').send(body(over)).expect(201)).body;
+    const approved = async (over: Record<string, unknown> = {}) => {
+      const p = await make(over);
+      return (await o.agent.post(`/v1/purchases/${p.id}/approve`).expect(200)).body;
+    };
+    const pay = (id: string, over: Record<string, unknown> = {}) =>
+      o.agent.post(`/v1/purchases/${id}/payments`).send({ paidOn: '2026-09-10', method: 'TRANSFER', amount: '100.00', ...over });
+    return { ...o, sup, supplier, body, make, approved, pay };
+  };
+
+  it('creates in TO_APPROVE with totals, and validates amounts, rates, supplier and dates', async () => {
+    const s = await setupP();
+    const p = (await s.agent.post('/v1/purchases').send(s.body({ vatLines: [vat('20', '1000'), vat('10', '500.00'), { vatRate: '0', net: '200', vat: '0' }] })).expect(201)).body;
+    expect(p).toMatchObject({ state: 'TO_APPROVE', currency: 'MAD', totalNet: '1700.00', totalVat: '250.00', totalGross: '1950.00', amountDue: '1950.00', paidAmount: '0.00', paymentStatus: 'UNPAID', overdue: false, disputed: false, rejectionReason: null, createdByName: 'Test User', approvedAt: null });
+    expect(p.supplier).toMatchObject({ name: s.sup.name, ice: s.sup.ice });
+    expect(await events(s.me.tenant.id, 'purchase.created')).toHaveLength(1);
+    await s.agent.get(`/v1/purchases/${p.id}`).expect(200);
+
+    const bad = async (over: Record<string, unknown>, path: string) => {
+      const r = await s.agent.post('/v1/purchases').send(s.body(over));
+      expect([r.status, r.body.issues?.[0]?.path], JSON.stringify(over)).toEqual([422, path]);
+    };
+    await s.agent.post('/v1/purchases').send(s.body({ vatLines: [{ vatRate: '20', net: '1000', vat: '200.99' }] })).expect(201);
+    await bad({ vatLines: [{ vatRate: '20', net: '1000', vat: '201.01' }] }, 'vatLines.0.vat');
+    await bad({ vatLines: [{ vatRate: '14', net: '1000', vat: '140' }] }, 'vatLines.0.vatRate');
+    await bad({ vatLines: [{ vatRate: '20', net: '-10', vat: '0' }] }, 'vatLines.0.net');
+    await bad({ vatLines: [{ vatRate: '0', net: '0', vat: '0' }] }, 'vatLines');
+    await bad({ dueDate: '2026-08-31' }, 'dueDate');
+    await bad({ issueDate: '2026-02-31' }, 'issueDate');
+    await bad({ supplierId: none }, 'supplierId');
+    const customer = (await s.agent.post('/v1/parties').send(customerBody).expect(201)).body;
+    await bad({ supplierId: customer.id }, 'supplierId');
+    expect((await s.agent.post('/v1/purchases').send({ ...s.body(), vatLines: [] })).status).toBe(422);
+    expect((await s.agent.post('/v1/purchases').send({ ...s.body(), number: '' })).status).toBe(422);
+    const both = (await s.agent.post('/v1/parties').send({ ...customerBody, kind: 'BOTH', name: 'Les deux' }).expect(201)).body;
+    await s.agent.post('/v1/purchases').send(s.body({ supplierId: both.id })).expect(201);
+  });
+
+  it('refuses duplicates, also when created concurrently', async () => {
+    const s = await setupP();
+    await s.agent.post('/v1/purchases').send(s.body({ number: 'FA 2026/001' })).expect(201);
+    for (const n of ['fa 2026/001', ' FA2026/001 ', 'FA  2026/001']) {
+      const r = await s.agent.post('/v1/purchases').send(s.body({ number: n }));
+      expect([r.status, r.body.code], n).toEqual([409, 'DUPLICATE']);
+    }
+    const other = await s.supplier();
+    await s.agent.post('/v1/purchases').send(s.body({ number: 'FA 2026/001', supplierId: other.id })).expect(201);
+    const results = await Promise.all(Array.from({ length: 5 }, () => s.agent.post('/v1/purchases').send(s.body({ number: 'COURSE-1' }))));
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409, 409, 409]);
+    expect((await admin.query("select count(*)::int n from purchases where tenant_id = $1 and number = 'COURSE-1'", [s.me.tenant.id])).rows[0].n).toBe(1);
+    const mine = await s.make({ number: 'AUTRE' });
+    const clash = await s.agent.put(`/v1/purchases/${mine.id}`).send(s.body({ number: 'fa2026/001' }));
+    expect([clash.status, clash.body.code]).toEqual([409, 'DUPLICATE']);
+    await s.agent.put(`/v1/purchases/${mine.id}`).send(s.body({ number: 'AUTRE' })).expect(200);
+    await expect(admin.query("insert into purchases (tenant_id, supplier_id, number, number_key, issue_date, due_date, category, description, vat_lines, vat_deductible, total_net, total_vat, total_gross, state) select tenant_id, supplier_id, 'x', number_key, issue_date, due_date, category, description, vat_lines, vat_deductible, total_net, total_vat, total_gross, state from purchases where id = $1", [mine.id])).rejects.toThrow(/purchases_number_uq/);
+  });
+
+  it('edits and deletes only before approval, and walks the state machine', async () => {
+    const s = await setupP();
+    const p = await s.make({ number: 'ETAT-1' });
+    const edited = (await s.agent.put(`/v1/purchases/${p.id}`).send(s.body({ number: 'ETAT-1', description: 'Modifiée', vatLines: [vat('10', '2000')] })).expect(200)).body;
+    expect([edited.description, edited.totalGross]).toEqual(['Modifiée', '2200.00']);
+    await s.agent.post(`/v1/purchases/${p.id}/reject`).send({}).expect(422);
+    const rej = (await s.agent.post(`/v1/purchases/${p.id}/reject`).send({ reason: 'Montant inattendu' }).expect(200)).body;
+    expect([rej.state, rej.rejectionReason]).toEqual(['REJECTED', 'Montant inattendu']);
+    for (const call of [() => s.agent.post(`/v1/purchases/${p.id}/approve`), () => s.agent.post(`/v1/purchases/${p.id}/reject`).send({ reason: 'x' }), () => s.agent.post(`/v1/purchases/${p.id}/reopen`), () => s.agent.post(`/v1/purchases/${p.id}/dispute`).send({ disputed: true })]) {
+      expect((await call()).status).toBe(409);
+    }
+    expect((await s.pay(p.id)).body.code).toBe('NOT_APPROVED');
+    const back = (await s.agent.put(`/v1/purchases/${p.id}`).send(s.body({ number: 'ETAT-1' })).expect(200)).body;
+    expect([back.state, back.rejectionReason]).toEqual(['TO_APPROVE', null]);
+    const ok = (await s.agent.post(`/v1/purchases/${p.id}/approve`).expect(200)).body;
+    expect([ok.state, ok.approvedByName]).toEqual(['APPROVED', 'Test User']);
+    expect(ok.approvedAt).not.toBeNull();
+    for (const call of [() => s.agent.put(`/v1/purchases/${p.id}`).send(s.body({ number: 'ETAT-1' })), () => s.agent.delete(`/v1/purchases/${p.id}`)]) {
+      const r = await call();
+      expect([r.status, r.body.code]).toEqual([409, 'NOT_EDITABLE']);
+    }
+    expect((await s.agent.post(`/v1/purchases/${p.id}/approve`)).status).toBe(409);
+    expect((await s.agent.post(`/v1/purchases/${p.id}/reject`).send({ reason: 'x' })).status).toBe(409);
+    await s.pay(p.id, { amount: '50' }).expect(201);
+    const held = await s.agent.post(`/v1/purchases/${p.id}/reopen`);
+    expect([held.status, held.body.code]).toEqual([409, 'HAS_PAYMENTS']);
+    await s.agent.delete(`/v1/purchases/${p.id}/payments/${(await s.agent.get(`/v1/purchases/${p.id}`)).body.payments[0].id}`).expect(200);
+    const reopened = (await s.agent.post(`/v1/purchases/${p.id}/reopen`).expect(200)).body;
+    expect([reopened.state, reopened.approvedAt, reopened.approvedByName]).toEqual(['TO_APPROVE', null, null]);
+    const gone = await s.agent.delete(`/v1/purchases/${p.id}`);
+    expect([gone.status, gone.body.code]).toEqual([409, 'HAS_PAYMENTS']);
+    const q = await s.make();
+    await s.agent.delete(`/v1/purchases/${q.id}`).expect(204);
+    await s.agent.get(`/v1/purchases/${q.id}`).expect(404);
+    for (const a of ['approved', 'rejected', 'reopened', 'payment_recorded', 'payment_voided', 'deleted', 'updated']) {
+      expect((await events(s.me.tenant.id, `purchase.${a}`)).length, a).toBeGreaterThan(0);
+    }
+  });
+
+  it('freezes the supplier at approval', async () => {
+    const s = await setupP();
+    const sup = await s.supplier({ ice: '001509876000041' }, 'Nom avant');
+    const p = await s.make({ supplierId: sup.id });
+    await s.agent.patch(`/v1/parties/${sup.id}`).send({ name: 'Nom après' }).expect(200);
+    expect((await s.agent.get(`/v1/purchases/${p.id}`)).body.supplier.name).toBe('Nom après');
+    await s.agent.post(`/v1/purchases/${p.id}/approve`).expect(200);
+    await s.agent.patch(`/v1/parties/${sup.id}`).send({ name: 'Encore changé', ice: '001509876000999' }).expect(200);
+    expect((await s.agent.get(`/v1/purchases/${p.id}`)).body.supplier).toEqual({ name: 'Nom après', ice: '001509876000041', ifNumber: '12345678' });
+    const del = await s.agent.delete(`/v1/parties/${sup.id}`);
+    expect(del.status).toBe(409);
+    const draftOnly = await s.supplier();
+    await s.make({ supplierId: draftOnly.id });
+    expect((await s.agent.delete(`/v1/parties/${draftOnly.id}`)).status).toBe(409);
+  });
+
+  it('records payments with withholdings and refuses the invalid ones', async () => {
+    const s = await setupP();
+    const p = await s.approved({ vatLines: [vat('20', '1000')] });
+    const first = (await s.pay(p.id, { amount: '900.00', vatWithheld: '150.00', taxWithheld: '50.00', reference: 'VIR-1' }).expect(201)).body;
+    expect(first.payments[0]).toMatchObject({ paidOn: '2026-09-10', method: 'TRANSFER', amount: '900.00', vatWithheld: '150.00', taxWithheld: '50.00', settled: '1100.00', reference: 'VIR-1' });
+    expect([first.paidAmount, first.amountDue, first.paymentStatus]).toEqual(['1100.00', '100.00', 'PARTIAL']);
+    const over = await s.pay(p.id, { amount: '100.01' });
+    expect([over.status, over.body.code]).toEqual([409, 'OVERPAYMENT']);
+    const overVat = await s.pay(p.id, { amount: '1', vatWithheld: '50.01' });
+    expect([overVat.status, overVat.body.issues[0].path]).toEqual([422, 'vatWithheld']);
+    expect((await s.pay(p.id, { amount: '0' })).status).toBe(422);
+    expect((await s.pay(p.id, { amount: '-5' })).status).toBe(422);
+    expect((await s.pay(p.id, { paidOn: '2026-08-31' })).body.issues[0].path).toBe('paidOn');
+    expect((await s.pay(p.id, { amount: '0', taxWithheld: '10' }).expect(201)).body.paidAmount).toBe('1110.00');
+    const done = (await s.pay(p.id, { amount: '40.00', vatWithheld: '50' }).expect(201)).body;
+    expect([done.paymentStatus, done.amountDue, done.paidAmount]).toEqual(['PAID', '0.00', '1200.00']);
+    expect((await s.pay(p.id, { amount: '0.01' })).body.code).toBe('OVERPAYMENT');
+    expect((await s.pay(none)).status).toBe(404);
+
+    const v = (await s.agent.delete(`/v1/purchases/${p.id}/payments/${done.payments.at(-1).id}`).expect(200)).body;
+    expect([v.paymentStatus, v.amountDue, v.payments.length]).toEqual(['PARTIAL', '90.00', 2]);
+    await s.agent.delete(`/v1/purchases/${p.id}/payments/${done.payments.at(-1).id}`).expect(404);
+    const kept = (await admin.query('select count(*)::int n, count(voided_at)::int v from purchase_payments where purchase_id = $1', [p.id])).rows[0];
+    expect(kept).toEqual({ n: 3, v: 1 });
+    expect((await s.pay(p.id, { amount: '90.00' }).expect(201)).body.paymentStatus).toBe('PAID');
+    await expect(admin.query('delete from purchase_payments where purchase_id = $1', [p.id])).rejects.toThrow(/seulement annulé/);
+    await expect(appPool.query('update purchase_payments set amount = 1 where purchase_id = $1', [p.id])).rejects.toThrow();
+  });
+
+  it('computes overdue, dispute and the warnings', async () => {
+    const s = await setupP();
+    const late = await s.approved({ issueDate: '2026-01-10', dueDate: '2026-02-10' });
+    expect(late.overdue).toBe(true);
+    const disp = (await s.agent.post(`/v1/purchases/${late.id}/dispute`).send({ disputed: true }).expect(200)).body;
+    expect([disp.disputed, disp.overdue]).toEqual([true, false]);
+    expect((await admin.query('select disputed_at is not null as s, dispute_cleared_at is null as c from purchases where id = $1', [late.id])).rows[0]).toEqual({ s: true, c: true });
+    const lifted = (await s.agent.post(`/v1/purchases/${late.id}/dispute`).send({ disputed: false }).expect(200)).body;
+    expect([lifted.disputed, lifted.overdue]).toEqual([false, true]);
+    expect((await admin.query('select dispute_cleared_at is not null as c from purchases where id = $1', [late.id])).rows[0].c).toBe(true);
+    const paidUp = (await s.pay(late.id, { amount: '1200', paidOn: '2026-02-01' }).expect(201)).body;
+    expect([paidUp.overdue, paidUp.paymentStatus]).toEqual([false, 'PAID']);
+    expect((await s.agent.post(`/v1/purchases/${(await s.make()).id}/dispute`).send({ disputed: true })).body.code).toBe('NOT_APPROVED');
+    const notYet = await s.approved({ dueDate: '2099-01-01', issueDate: '2026-09-01', number: 'LONG' });
+    expect(notYet.overdue).toBe(false);
+
+    expect(notYet.warnings).toEqual(['TERM_TOO_LONG']);
+    const bare = await s.supplier({ ice: undefined, ifNumber: undefined });
+    await s.agent.patch(`/v1/parties/${bare.id}`).send({ ice: null, ifNumber: null }).catch(() => undefined);
+    await admin.query('update parties set ice = null, if_number = null where id = $1', [bare.id]);
+    const w = await s.make({ supplierId: bare.id });
+    expect(w.warnings).toEqual(['SUPPLIER_ICE_MISSING', 'SUPPLIER_IF_MISSING']);
+
+    const cash = await s.supplier({}, 'Fournisseur Espèces');
+    const a = await s.approved({ supplierId: cash.id, vatLines: [vat('20', '10000')] });
+    const b = await s.approved({ supplierId: cash.id, vatLines: [vat('20', '10000')] });
+    expect(a.warnings).toEqual([]);
+    await s.pay(a.id, { method: 'CASH', amount: '3000', paidOn: '2026-09-10' }).expect(201);
+    await s.pay(b.id, { method: 'CASH', amount: '2000', paidOn: '2026-09-10' }).expect(201);
+    expect((await s.agent.get(`/v1/purchases/${a.id}`)).body.warnings).toEqual([]);
+    await s.pay(b.id, { method: 'CASH', amount: '0.01', paidOn: '2026-09-10' }).expect(201);
+    expect((await s.agent.get(`/v1/purchases/${a.id}`)).body.warnings).toEqual(['CASH_LIMIT']);
+    expect((await s.agent.get(`/v1/purchases/${b.id}`)).body.warnings).toEqual(['CASH_LIMIT']);
+    const c = await s.approved({ supplierId: cash.id, vatLines: [vat('20', '60000')] });
+    for (const day of ['02', '05', '08', '12', '15', '18', '22', '25', '27', '29']) await s.pay(c.id, { method: 'CASH', amount: '4900', paidOn: `2026-10-${day}` }).expect(201);
+    expect((await s.agent.get(`/v1/purchases/${c.id}`)).body.warnings).not.toContain('CASH_LIMIT');
+    await s.pay(c.id, { method: 'CASH', amount: '1100', paidOn: '2026-10-30' }).expect(201);
+    expect((await s.agent.get(`/v1/purchases/${c.id}`)).body.warnings).toContain('CASH_LIMIT');
+    const bank = await s.approved({ supplierId: cash.id, number: 'VIR' });
+    await s.pay(bank.id, { amount: '1200', paidOn: '2026-10-30' }).expect(201);
+    expect((await s.agent.get(`/v1/purchases/${bank.id}`)).body.warnings).toEqual([]);
+    const voidPay = (await s.agent.get(`/v1/purchases/${b.id}`)).body.payments.at(-1);
+    await s.agent.delete(`/v1/purchases/${b.id}/payments/${voidPay.id}`).expect(200);
+    expect((await s.agent.get(`/v1/purchases/${a.id}`)).body.warnings).toEqual([]);
+  });
+
+  it('lists with filters, search, pagination and a workspace overview', async () => {
+    const s = await setupP();
+    const other = await s.supplier({}, 'Zeta Fournitures');
+    const p1 = await s.approved({ number: 'L-1', issueDate: '2026-06-01', dueDate: '2026-07-01', description: 'Hébergement serveur' });
+    const p2 = await s.approved({ number: 'L-2', issueDate: '2026-07-01', dueDate: dayOff(3), supplierId: other.id });
+    const p3 = await s.make({ number: 'L-3', issueDate: '2026-08-01' });
+    const p4 = await s.approved({ number: 'L-4', issueDate: '2026-09-01', dueDate: dayOff(30) });
+    await s.pay(p4.id, { amount: '1200' }).expect(201);
+    await s.pay(p1.id, { amount: '200' }).expect(201);
+    const rej = await s.make({ number: 'L-5', issueDate: '2026-10-01' });
+    await s.agent.post(`/v1/purchases/${rej.id}/reject`).send({ reason: 'non' }).expect(200);
+    await s.agent.post(`/v1/purchases/${p2.id}/dispute`).send({ disputed: true }).expect(200);
+    const list = async (q = '') => (await s.agent.get(`/v1/purchases${q}`).expect(200)).body;
+    const all = await list();
+    expect(all.total).toBe(5);
+    expect(all.items.map((i: { number: string }) => i.number)).toEqual(['L-5', 'L-4', 'L-3', 'L-2', 'L-1']);
+    expect(all.items[4]).toMatchObject({ supplierName: s.sup.name, supplierId: s.sup.id, overdue: true, paymentStatus: 'PARTIAL', amountDue: '1000.00', totalGross: '1200.00', category: 'SERVICES', warningCount: 0 });
+    expect(all.overview).toEqual({ toApprove: 1, unpaidTotal: '2200.00', overdueTotal: '1000.00', overdueCount: 1, dueWithin7Days: '0.00' });
+    await s.agent.post(`/v1/purchases/${p2.id}/dispute`).send({ disputed: false }).expect(200);
+    expect((await list()).overview).toEqual({ toApprove: 1, unpaidTotal: '2200.00', overdueTotal: '1000.00', overdueCount: 1, dueWithin7Days: '1200.00' });
+
+    expect((await list('?state=TO_APPROVE')).items.map((i: { number: string }) => i.number)).toEqual(['L-3']);
+    expect((await list('?paymentStatus=PAID')).items.map((i: { number: string }) => i.number)).toEqual(['L-4']);
+    expect((await list('?paymentStatus=PARTIAL')).total).toBe(1);
+    expect((await list('?paymentStatus=UNPAID')).total).toBe(3);
+    expect((await list('?overdue=true')).items.map((i: { number: string }) => i.number)).toEqual(['L-1']);
+    expect((await list('?overdue=false')).total).toBe(4);
+    expect((await list(`?supplierId=${other.id}`)).total).toBe(1);
+    expect((await list('?q=zeta')).items[0].number).toBe('L-2');
+    expect((await list('?q=hébergement')).items[0].number).toBe('L-1');
+    expect((await list('?q=l-4')).total).toBe(1);
+    expect((await list('?q=100%25')).total).toBe(0);
+    expect((await list('?from=2026-07-01&to=2026-08-31')).items.map((i: { number: string }) => i.number)).toEqual(['L-3', 'L-2']);
+    const page = await list('?pageSize=2&page=2');
+    expect([page.total, page.items.map((i: { number: string }) => i.number)]).toEqual([5, ['L-3', 'L-2']]);
+    expect((await list('?state=APPROVED&pageSize=2')).overview.toApprove).toBe(1);
+    for (const bad of ['?state=X', '?paymentStatus=X', '?overdue=maybe', '?page=0', '?pageSize=101', '?from=hier']) expect((await s.agent.get(`/v1/purchases${bad}`)).status).toBe(422);
+  });
+
+  it('applies the role table, and a MEMBER never approves', async () => {
+    const none2 = none;
+    const rows: [string, (a: ReturnType<typeof request>) => Promise<{ status: number }>, string[]][] = [
+      ['list', (a) => a.get('/v1/purchases'), ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER']],
+      ['get', (a) => a.get(`/v1/purchases/${none2}`), ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER']],
+      ['create', (a) => a.post('/v1/purchases').send({ supplierId: none2, number: 'x', issueDate: '2026-09-01', dueDate: '2026-10-01', description: 'd', vatLines: [{ vatRate: '20', net: '1', vat: '0.2' }] }), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['edit', (a) => a.put(`/v1/purchases/${none2}`).send({ supplierId: none2, number: 'x', issueDate: '2026-09-01', dueDate: '2026-10-01', description: 'd', vatLines: [{ vatRate: '20', net: '1', vat: '0.2' }] }), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['pay', (a) => a.post(`/v1/purchases/${none2}/payments`).send({ paidOn: '2026-09-01', method: 'CASH', amount: '1' }), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['dispute', (a) => a.post(`/v1/purchases/${none2}/dispute`).send({ disputed: true }), ['OWNER', 'ADMIN', 'MEMBER']],
+      ['approve', (a) => a.post(`/v1/purchases/${none2}/approve`), ['OWNER', 'ADMIN']],
+      ['reject', (a) => a.post(`/v1/purchases/${none2}/reject`).send({ reason: 'x' }), ['OWNER', 'ADMIN']],
+      ['reopen', (a) => a.post(`/v1/purchases/${none2}/reopen`), ['OWNER', 'ADMIN']],
+      ['delete', (a) => a.delete(`/v1/purchases/${none2}`), ['OWNER', 'ADMIN']],
+      ['void payment', (a) => a.delete(`/v1/purchases/${none2}/payments/${none2}`), ['OWNER', 'ADMIN']],
+    ];
+    for (const role of ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER'] as const) {
+      const r = await asRole(role);
+      for (const [name, call, allowed] of rows) {
+        const status = (await call(r.agent as never)).status;
+        expect({ role, name, forbidden: status === 403 }, `${role} ${name} -> ${status}`).toEqual({ role, name, forbidden: !allowed.includes(role) });
+      }
+    }
+    const s = await setupP();
+    const m = await join(s.agent as never, 'MEMBER');
+    const mine = (await m.agent.post('/v1/purchases').send(s.body()).expect(201)).body;
+    expect((await m.agent.post(`/v1/purchases/${mine.id}/approve`)).status).toBe(403);
+    expect((await s.agent.post(`/v1/purchases/${mine.id}/approve`).expect(200)).body.approvedByName).toBe('Test User');
+    await m.agent.post(`/v1/purchases/${mine.id}/payments`).send({ paidOn: '2026-09-10', method: 'TRANSFER', amount: '10' }).expect(201);
+  });
+
+  it('keeps workspaces apart', async () => {
+    const a = await setupP();
+    const b = await setupP();
+    const p = await a.approved();
+    expect((await b.agent.get('/v1/purchases').expect(200)).body.total).toBe(0);
+    for (const call of [() => b.agent.get(`/v1/purchases/${p.id}`), () => b.agent.post(`/v1/purchases/${p.id}/reopen`), () => b.pay(p.id), () => b.agent.delete(`/v1/purchases/${p.id}`)]) {
+      expect((await call()).status).toBe(404);
+    }
+    expect((await b.agent.post('/v1/purchases').send(a.body({ supplierId: a.sup.id }))).status).toBe(422);
+    await b.agent.post('/v1/purchases').send(b.body({ number: p.number })).expect(201);
+  });
+
+  it('is in the export, survives closure when approved, and goes with the retention purge', async () => {
+    const s = await setupP();
+    const keep = await s.approved({ number: 'GARDEE' });
+    await s.pay(keep.id, { amount: '500', vatWithheld: '100', reference: 'V1' }).expect(201);
+    const pending = await s.make({ number: 'EN-ATTENTE' });
+    const rejected = await s.make({ number: 'REJETEE' });
+    await s.agent.post(`/v1/purchases/${rejected.id}/reject`).send({ reason: 'non' }).expect(200);
+    const unused = await s.supplier({}, 'Fournisseur sans facture');
+    const exported = (await s.agent.get('/v1/export').expect(200)).body;
+    expect(exported.purchases.map((p: { number: string }) => p.number).sort()).toEqual(['EN-ATTENTE', 'GARDEE', 'REJETEE']);
+    expect(exported.purchases.find((p: { number: string }) => p.number === 'GARDEE').payments).toHaveLength(1);
+    expect(exported.purchasePayments).toHaveLength(1);
+
+    const tenant = s.me.tenant.id as string;
+    await s.agent.post('/v1/tenant/close').send({ password: PASSWORD, confirmName: 'Société Test' }).expect(204);
+    const q = async (sql: string) => (await admin.query(sql, [tenant])).rows;
+    expect((await q('select number, created_by_name, approved_by_name, created_by from purchases where tenant_id = $1')).map((r) => r.number)).toEqual(['GARDEE']);
+    expect(await q('select created_by_name, approved_by_name, created_by from purchases where tenant_id = $1')).toEqual([{ created_by_name: 'Utilisateur supprimé', approved_by_name: 'Utilisateur supprimé', created_by: null }]);
+    expect(await q('select amount::text, vat_withheld::text, reference from purchase_payments where tenant_id = $1')).toEqual([{ amount: '500.00', vat_withheld: '100.00', reference: 'V1' }]);
+    const partyNames = (await q('select name from parties where tenant_id = $1')).map((r) => r.name);
+    expect(partyNames).toEqual([s.sup.name]);
+    expect(partyNames).not.toContain(unused.name);
+    expect(pending.id).toBeDefined();
+    expect((await q('select retain_until::text r from tenants where id = $1'))[0].r).toBe('2036-12-31');
+
+    const retention = app.get(RetentionService, { strict: false });
+    await retention.run(new Date('2030-01-01T03:00:00Z'));
+    expect(await q('select 1 from purchases where tenant_id = $1')).toHaveLength(1);
+    await retention.run(new Date('2037-01-02T03:00:00Z'));
+    for (const t of ['purchases', 'purchase_payments', 'parties']) expect(await q(`select 1 from ${t} where tenant_id = $1`), t).toHaveLength(0);
+  });
+
+  it('forces RLS on the purchase tables', async () => {
+    const { rows } = await admin.query(`
+      select c.relname, c.relrowsecurity, c.relforcerowsecurity,
+        (select count(*)::int from pg_policies p where p.schemaname = 'public' and p.tablename = c.relname) as policies
+      from pg_class c where c.relname in ('purchases', 'purchase_payments')`);
+    expect(rows.map((r) => r.relname).sort()).toEqual(['purchase_payments', 'purchases']);
+    for (const r of rows) expect([r.relrowsecurity, r.relforcerowsecurity, r.policies > 0]).toEqual([true, true, true]);
+  });
+});
+
+describe('withholding on sales payments', () => {
+  const todayStr = () => new Date().toLocaleDateString('en-CA');
+  const setupW = async () => {
+    const o = await ownerWithCompany();
+    const party = (await o.agent.post('/v1/parties').send({ ...customerBody, name: 'Commune de Test' }).expect(201)).body;
+    // 37.5 x 1000 at 20 %: net 37 500, VAT 7 500, 45 000 TTC
+    const d = (await o.agent.post('/v1/invoices').send({ customerId: party.id, issueDate: '2026-03-10', lines: [{ ...line, quantity: '37.5' }] }).expect(201)).body;
+    const inv = (await o.agent.post(`/v1/invoices/${d.id}/issue`).expect(200)).body;
+    const pay = (body: Record<string, unknown>) => o.agent.post(`/v1/invoices/${inv.id}/payments`).send({ paidOn: todayStr(), method: 'TRANSFER', ...body });
+    return { ...o, party, inv, pay };
+  };
+
+  it('settles an invoice with cash plus withholdings, and keeps collected figures in cash', async () => {
+    const s = await setupW();
+    expect(s.inv.totals.amountDue).toBe('45000.00');
+    const before = (await s.agent.get('/v1/dashboard').expect(200)).body;
+    const res = (await s.pay({ amount: '39375.00', vatWithheld: '5625.00' }).expect(201)).body;
+    expect(res.payments[0]).toMatchObject({ amount: '39375.00', vatWithheld: '5625.00', taxWithheld: '0.00' });
+    expect([res.paidAmount, res.paymentStatus, res.overdue]).toEqual(['45000.00', 'PAID', false]);
+    const list = (await s.agent.get('/v1/invoices').expect(200)).body.find((i: { id: string }) => i.id === s.inv.id);
+    expect([list.paidAmount, list.paymentStatus]).toEqual(['45000.00', 'PAID']);
+    const after = (await s.agent.get('/v1/dashboard').expect(200)).body;
+    expect(new Decimal(after.collectedThisMonth).minus(before.collectedThisMonth).toFixed(2)).toBe('39375.00');
+    expect(new Decimal(before.outstanding).minus(after.outstanding).toFixed(2)).toBe('45000.00');
+    expect(after.monthly.at(-1).collected).toBe(after.collectedThisMonth);
+    expect(after.recentPayments[0]).toMatchObject({ amount: '39375.00', vatWithheld: '5625.00' });
+    expect(new Decimal(after.vatCollectedThisMonth).minus(before.vatCollectedThisMonth).toFixed(2)).toBe('7500.00');
+    expect((await s.pay({ amount: '1' })).status).toBe(422);
+    const out = (await s.agent.get('/v1/export').expect(200)).body;
+    expect(out.payments[0]).toMatchObject({ amount: '39375.00', vatWithheld: '5625.00' });
+    const v = (await s.agent.delete(`/v1/payments/${res.payments[0].id}`).expect(200)).body;
+    expect([v.paymentStatus, v.paidAmount]).toEqual(['UNPAID', '0.00']);
+  });
+
+  it('applies the validation rules', async () => {
+    const s = await setupW();
+    const path = async (body: Record<string, unknown>) => {
+      const r = await s.pay(body);
+      return [r.status, r.body.issues?.[0]?.path, r.body.issues?.[0]?.rule];
+    };
+    expect(await path({ amount: '0' })).toEqual([422, 'amount', 'PAYMENT-POSITIVE']);
+    expect(await path({ amount: '-1' })).toEqual([422, 'amount', 'PAYMENT-POSITIVE']);
+    expect(await path({ amount: '10', vatWithheld: '-1' })).toEqual([422, 'vatWithheld', 'PAYMENT-NEGATIVE']);
+    expect(await path({ amount: '10', taxWithheld: '-1' })).toEqual([422, 'taxWithheld', 'PAYMENT-NEGATIVE']);
+    expect(await path({ amount: '40000', vatWithheld: '5000.01' })).toEqual([422, 'amount', 'PAYMENT-EXCEEDS']);
+    expect(await path({ amount: '100', vatWithheld: '7500.01' })).toEqual([422, 'vatWithheld', 'PAYMENT-VAT-EXCEEDS']);
+    await s.pay({ amount: '0', taxWithheld: '500' }).expect(201);
+    const first = (await s.pay({ amount: '1000', vatWithheld: '7000' }).expect(201)).body;
+    expect(first.paidAmount).toBe('8500.00');
+    expect(await path({ amount: '10', vatWithheld: '500.01' })).toEqual([422, 'vatWithheld', 'PAYMENT-VAT-EXCEEDS']);
+    await s.pay({ amount: '10', vatWithheld: '500' }).expect(201);
+    expect((await s.pay({ amount: '36000' })).body.issues[0].rule).toBe('PAYMENT-EXCEEDS');
+    expect((await s.pay({ amount: '35990.00' }).expect(201)).body.paymentStatus).toBe('PAID');
+    await expect(appPool.query('update payments set vat_withheld = 1 where invoice_id = $1', [s.inv.id])).rejects.toThrow();
+  });
+
+  it('counts the settled sum for overdue, reminders and bank suggestions, and bank matches stay cash', async () => {
+    const s = await setupW();
+    await s.pay({ amount: '30000', vatWithheld: '5625' }).expect(201);
+    const pdf = pdfBytes('w');
+    await s.agent.put(`/v1/invoices/${s.inv.id}/pdf`).set('Content-Type', 'application/pdf').set('X-Internal-Token', env.internalToken).send(pdf).expect(204);
+    const reminder = (await s.agent.get(`/v1/invoices/${s.inv.id}/send-preview?kind=REMINDER`).expect(200)).body;
+    expect(reminder.message).toContain('9 375,00 MAD');
+    const inv = (await s.agent.get(`/v1/invoices/${s.inv.id}`).expect(200)).body;
+    expect([inv.paidAmount, inv.paymentStatus, inv.overdue]).toEqual(['35625.00', 'PARTIALLY_PAID', true]);
+    const dash = (await s.agent.get('/v1/dashboard').expect(200)).body;
+    expect(dash.overdue).toBe('9375.00');
+    expect(dash.aging.d31to60 === '9375.00' || dash.aging.d61to90 === '9375.00' || dash.aging.over90 === '9375.00' || dash.aging.d1to30 === '9375.00').toBe(true);
+    await s.agent.post('/v1/bank/imports').send({ fileName: 'w.csv', lines: [{ date: '2026-11-10', label: 'VIR DIVERS', amount: '9375.00' }, { date: '2026-11-11', label: 'VIR AUTRE', amount: '9375.00' }] }).expect(201);
+    const lines = (await s.agent.get('/v1/bank/transactions').expect(200)).body.items;
+    expect(lines[0].suggestions[0]).toMatchObject({ invoiceId: s.inv.id, amountDue: '9375.00', reasons: ['AMOUNT'] });
+    const matched = (await s.agent.post(`/v1/bank/transactions/${lines[0].id}/match`).send({ allocations: [{ invoiceId: s.inv.id, amount: '9375.00' }] }).expect(200)).body;
+    expect(matched.allocations[0].amount).toBe('9375.00');
+    const paid = (await s.agent.get(`/v1/invoices/${s.inv.id}`).expect(200)).body;
+    expect(paid.payments.find((p: { amount: string }) => p.amount === '9375.00')).toMatchObject({ vatWithheld: '0.00', taxWithheld: '0.00' });
+    expect(paid.paymentStatus).toBe('PAID');
+  });
+
+  it('stores the VAT basis on the company, CASH by default', async () => {
+    const o = await ownerWithCompany();
+    expect((await o.agent.get('/v1/company').expect(200)).body.vatBasis).toBe('CASH');
+    const accrual = (await o.agent.put('/v1/company').send({ ...company, email: uniqueEmail('c'), vatBasis: 'ACCRUAL' }).expect(200)).body;
+    expect(accrual.vatBasis).toBe('ACCRUAL');
+    expect((await o.agent.put('/v1/company').send({ ...company, email: uniqueEmail('c'), vatBasis: 'NOPE' })).status).toBe(422);
+  });
+});
+
+describe('reports', () => {
+  const setupR = async () => {
+    const o = await ownerWithCompany();
+    const customer = (await o.agent.post('/v1/parties').send({ ...customerBody, name: 'Client Rapport' }).expect(201)).body;
+    const supplier = (await o.agent.post('/v1/parties').send({ ...customerBody, kind: 'SUPPLIER', name: 'Fournisseur Rapport', ifNumber: '777' }).expect(201)).body;
+    const invoice = async (lines: Record<string, unknown>[], issueDate = '2026-03-10', type = 'INVOICE', extra: Record<string, unknown> = {}) => {
+      const d = (await o.agent.post('/v1/invoices').send({ customerId: customer.id, issueDate, type, lines, ...extra }).expect(201)).body;
+      return (await o.agent.post(`/v1/invoices/${d.id}/issue`).expect(200)).body;
+    };
+    const pay = (id: string, paidOn: string, body: Record<string, unknown>) =>
+      o.agent.post(`/v1/invoices/${id}/payments`).send({ method: 'TRANSFER', paidOn, ...body }).expect(201);
+    let n = 0;
+    const purchase = async (over: Record<string, unknown>, approve = true) => {
+      const body = { supplierId: supplier.id, number: `R-${++n}`, issueDate: '2026-03-02', dueDate: '2026-04-02', category: 'SERVICES', description: 'Achat', vatDeductible: true, ...over };
+      const p = (await o.agent.post('/v1/purchases').send(body).expect(201)).body;
+      return approve ? (await o.agent.post(`/v1/purchases/${p.id}/approve`).expect(200)).body : p;
+    };
+    const ppay = (id: string, paidOn: string, body: Record<string, unknown>) =>
+      o.agent.post(`/v1/purchases/${id}/payments`).send({ method: 'TRANSFER', paidOn, vatWithheld: '0', taxWithheld: '0', ...body });
+    const report = async (path: string) => (await o.agent.get(`/v1/reports/${path}`).expect(200)).body;
+    return { ...o, customer, supplier, invoice, pay, purchase, ppay, report };
+  };
+  const vl = (rate: string, net: string) => ({ vatRate: rate, net, vat: new Decimal(net).times(rate).div(100).toFixed(2) });
+
+  it('prepares the VAT statement on a cash basis, then on an accrual basis', async () => {
+    const s = await setupR();
+    const i1 = await s.invoice([{ ...line, quantity: '2' }]);
+    const i2 = await s.invoice([{ ...line, quantity: '1' }, { ...line, quantity: '1', unitPrice: '500', vatRate: '10' }, { ...line, quantity: '1', unitPrice: '300', vatRate: '0' }]);
+    const i3 = await s.invoice([{ ...line, quantity: '1' }]);
+    const i4 = await s.invoice([{ ...line, quantity: '1' }]);
+    await s.pay(i1.id, '2026-03-20', { amount: '2400' });
+    await s.pay(i2.id, '2026-03-21', { amount: '1025' });
+    await s.pay(i2.id, '2026-04-05', { amount: '1025' });
+    await s.pay(i3.id, '2026-03-22', { amount: '900', vatWithheld: '150', taxWithheld: '50' });
+    const gone = (await s.pay(i4.id, '2026-03-12', { amount: '1200' })).body.payments[0];
+    await s.agent.delete(`/v1/payments/${gone.id}`).expect(200);
+    const cn = await s.invoice([{ ...line, quantity: '1', unitPrice: '500' }], '2026-03-25', 'CREDIT_NOTE', { originalInvoiceId: i1.id });
+    const p1 = await s.purchase({ vatLines: [vl('20', '1000')] });
+    await s.ppay(p1.id, '2026-03-15', { amount: '1200' }).expect(201);
+    const p2 = await s.purchase({ category: 'GOODS', vatLines: [vl('20', '2000')] });
+    await s.ppay(p2.id, '2026-03-16', { amount: '1200' }).expect(201);
+    const p3 = await s.purchase({ category: 'FIXED_ASSET', vatLines: [vl('10', '5000')] });
+    await s.ppay(p3.id, '2026-03-17', { amount: '5500' }).expect(201);
+    const p4 = await s.purchase({ vatDeductible: false, vatLines: [vl('20', '800')] });
+    await s.ppay(p4.id, '2026-03-18', { amount: '960' }).expect(201);
+    const p6 = await s.purchase({ vatLines: [vl('20', '700')] });
+    const voided = (await s.ppay(p6.id, '2026-03-19', { amount: '840' }).expect(201)).body.payments[0];
+    await s.agent.delete(`/v1/purchases/${p6.id}/payments/${voided.id}`).expect(200);
+    await s.purchase({ vatLines: [vl('20', '999')] }, false);
+    const p7 = await s.purchase({ vatLines: [vl('20', '500')] });
+    await s.ppay(p7.id, '2026-04-02', { amount: '600' }).expect(201);
+
+    const mar = await s.report('vat?period=2026-03');
+    expect(mar).toMatchObject({ period: '2026-03', from: '2026-03-01', to: '2026-03-31', basis: 'CASH', filingDeadline: '2026-04-30', previousCredit: '0.00' });
+    expect(mar.collected).toEqual({
+      byRate: [{ vatRate: '20', base: '2916.67', vat: '583.33' }, { vatRate: '10', base: '250.00', vat: '25.00' }],
+      exemptBase: '150.00',
+      totalBase: '3316.67',
+      totalVat: '608.33',
+    });
+    expect(mar.withheldByCustomers).toBe('150.00');
+    expect(mar.deductible).toEqual({
+      services: { base: '1000.00', vat: '200.00' },
+      goods: { base: '1000.00', vat: '200.00' },
+      fixedAssets: { base: '5000.00', vat: '500.00' },
+      totalVat: '900.00',
+    });
+    expect([mar.vatDue, mar.creditCarriedForward]).toEqual(['0.00', '441.67']);
+    expect(mar.deductions).toHaveLength(3);
+    expect(mar.deductions[0]).toMatchObject({ purchaseId: p1.id, supplierName: 'Fournisseur Rapport', supplierIf: '777', supplierIce: customerBody.ice, category: 'SERVICES', vatRate: '20', base: '1000.00', vat: '200.00', paidOn: '2026-03-15', method: 'TRANSFER', reference: null });
+    expect(mar.sales.filter((r: { invoiceId: string }) => r.invoiceId === cn.id)).toEqual([{ invoiceId: cn.id, number: cn.number, customerName: 'Client Rapport', date: '2026-03-25', vatRate: '20', base: '-500.00', vat: '-100.00' }]);
+    expect(mar.sales.some((r: { invoiceId: string }) => r.invoiceId === i4.id)).toBe(false);
+    expect(mar.notices).toEqual(['PURCHASES_TO_APPROVE']);
+
+    const apr = await s.report('vat?period=2026-04&previousCredit=5');
+    expect(apr.collected.totalVat).toBe('125.00');
+    expect(apr.deductible.services).toEqual({ base: '500.00', vat: '100.00' });
+    expect([apr.previousCredit, apr.vatDue, apr.creditCarriedForward]).toEqual(['5.00', '20.00', '0.00']);
+    const q1 = await s.report('vat?period=2026-Q1');
+    expect([q1.from, q1.to, q1.collected.totalVat, q1.deductible.totalVat, q1.notices]).toEqual(['2026-01-01', '2026-03-31', '608.33', '900.00', ['PERIOD_MISMATCH', 'PURCHASES_TO_APPROVE']]);
+    expect(new Decimal((await s.report('vat?period=2026-Q2')).collected.totalVat).toFixed(2)).toBe('125.00');
+
+    const cur = new Date().toLocaleDateString('en-CA').slice(0, 7);
+    expect((await s.report(`vat?period=${cur}`)).notices).toContain('PERIOD_NOT_OVER');
+
+    await s.agent.put('/v1/company').send({ ...company, email: uniqueEmail('c'), vatBasis: 'ACCRUAL' }).expect(200);
+    const acc = await s.report('vat?period=2026-03');
+    expect(acc.basis).toBe('ACCRUAL');
+    expect(acc.collected).toEqual({
+      byRate: [{ vatRate: '20', base: '4500.00', vat: '900.00' }, { vatRate: '10', base: '500.00', vat: '50.00' }],
+      exemptBase: '300.00',
+      totalBase: '5300.00',
+      totalVat: '950.00',
+    });
+    expect(acc.withheldByCustomers).toBe('150.00');
+    expect(acc.deductible.totalVat).toBe('900.00');
+    expect((await s.report('vat?period=2026-04')).collected.totalVat).toBe('0.00');
+    await s.agent.put('/v1/company').send({ ...company, email: uniqueEmail('c'), vatRegime: 'NOT_SUBJECT' }).expect(200);
+    expect((await s.report('vat?period=2026-03')).notices).toContain('NOT_SUBJECT');
+  });
+
+  it('adds up to the invoice to the cent whatever the payments', async () => {
+    const s = await setupR();
+    const inv = await s.invoice([{ ...line, quantity: '3', unitPrice: '33.33' }, { ...line, quantity: '7', unitPrice: '12.41', vatRate: '10' }]);
+    const gross = new Decimal(inv.totals.totalGross);
+    const parts = ['40.01', '33.33', gross.minus('73.34').toFixed(2)];
+    await s.pay(inv.id, '2026-03-05', { amount: parts[0] });
+    await s.pay(inv.id, '2026-04-06', { amount: parts[1] });
+    await s.pay(inv.id, '2026-04-20', { amount: parts[2] });
+    const rows = [];
+    for (const period of ['2026-03', '2026-04']) rows.push(...(await s.report(`vat?period=${period}`)).sales);
+    const mine = rows.filter((r: { invoiceId: string }) => r.invoiceId === inv.id);
+    for (const b of inv.totals.breakdown) {
+      const forRate = mine.filter((r: { vatRate: string }) => new Decimal(r.vatRate).eq(b.rate));
+      expect(forRate.reduce((a: any, r: { base: string }) => a.plus(r.base), new Decimal(0)).toFixed(2), `base ${b.rate}`).toBe(b.base);
+      expect(forRate.reduce((a: any, r: { vat: string }) => a.plus(r.vat), new Decimal(0)).toFixed(2), `vat ${b.rate}`).toBe(b.vat);
+    }
+    const q = await s.report('vat?period=2026-Q1');
+    expect(q.collected.totalVat).not.toBe('0.00');
+    const supplierPurchase = await s.purchase({ vatLines: [vl('20', '333.33'), vl('10', '111.11')] });
+    await s.ppay(supplierPurchase.id, '2026-03-05', { amount: '100.01' }).expect(201);
+    await s.ppay(supplierPurchase.id, '2026-04-06', { amount: '200.02' }).expect(201);
+    await s.ppay(supplierPurchase.id, '2026-04-07', { amount: new Decimal(supplierPurchase.totalGross).minus('300.03').toFixed(2) }).expect(201);
+    const ded = [...(await s.report('vat?period=2026-03')).deductions, ...(await s.report('vat?period=2026-04')).deductions];
+    for (const line of supplierPurchase.vatLines) {
+      const forRate = ded.filter((d: { vatRate: string }) => new Decimal(d.vatRate).eq(line.vatRate));
+      expect(forRate.reduce((a: any, r: { base: string }) => a.plus(r.base), new Decimal(0)).toFixed(2)).toBe(new Decimal(line.net).toFixed(2));
+      expect(forRate.reduce((a: any, r: { vat: string }) => a.plus(r.vat), new Decimal(0)).toFixed(2)).toBe(new Decimal(line.vat).toFixed(2));
+    }
+  });
+
+  it('flags cash above the limit on the VAT statement', async () => {
+    const s = await setupR();
+    const p = await s.purchase({ vatLines: [vl('20', '10000')] });
+    await s.ppay(p.id, '2026-03-18', { amount: '6000', method: 'CASH' }).expect(201);
+    expect((await s.report('vat?period=2026-03')).notices).toEqual(['CASH_LIMIT']);
+    expect((await s.report('vat?period=2026-04')).notices).toEqual([]);
+  });
+
+  it('lists withholdings on suppliers and by customers', async () => {
+    const s = await setupR();
+    const inv = await s.invoice([{ ...line, quantity: '1' }]);
+    await s.pay(inv.id, '2026-03-22', { amount: '900', vatWithheld: '150', taxWithheld: '50' });
+    await s.pay(inv.id, '2026-04-22', { amount: '100' });
+    const p = await s.purchase({ vatLines: [vl('20', '1000')], number: 'RET-1' });
+    await s.ppay(p.id, '2026-03-19', { amount: '900', vatWithheld: '150', taxWithheld: '100', reference: 'V9' }).expect(201);
+    await s.ppay(p.id, '2026-03-25', { amount: '50' }).expect(201);
+    const w = await s.report('withholdings?period=2026-03');
+    expect(w.onSuppliers).toMatchObject({ totalVat: '150.00', totalTax: '100.00', remittanceDeadline: '2026-04-30' });
+    expect(w.onSuppliers.rows).toEqual([expect.objectContaining({ documentId: p.id, number: 'RET-1', partyName: 'Fournisseur Rapport', partyIf: '777', paidOn: '2026-03-19', totalNet: '1000.00', totalVat: '200.00', vatWithheld: '150.00', taxWithheld: '100.00' })]);
+    expect(w.byCustomers).toMatchObject({ totalVat: '150.00', totalTax: '50.00' });
+    expect(w.byCustomers.rows).toEqual([expect.objectContaining({ documentId: inv.id, number: inv.number, partyName: 'Client Rapport', totalNet: '1000.00', totalVat: '200.00', paidOn: '2026-03-22' })]);
+    const q = await s.report('withholdings?period=2026-Q1');
+    expect([q.from, q.to, q.onSuppliers.rows.length, q.onSuppliers.remittanceDeadline]).toEqual(['2026-01-01', '2026-03-31', 1, '2026-04-30']);
+    const empty = await s.report('withholdings?period=2026-05');
+    expect([empty.onSuppliers.rows, empty.byCustomers.rows, empty.onSuppliers.totalVat]).toEqual([[], [], '0.00']);
+    expect((await s.report('withholdings?period=2026-12')).onSuppliers.remittanceDeadline).toBe('2027-01-31');
+  });
+
+  it('computes the late-payment statement', async () => {
+    const s = await setupR();
+    const mk = async (over: Record<string, unknown>, net = '1000') => s.purchase({ vatLines: [vl('20', net)], ...over });
+    const t1 = await mk({ number: 'T1', issueDate: '2025-12-01', dueDate: '2026-01-15' });
+    await s.ppay(t1.id, '2026-02-20', { amount: '1200' }).expect(201);
+    await mk({ number: 'T2', issueDate: '2025-11-01', dueDate: '2025-12-01' }, '2000');
+    await mk({ number: 'T3', issueDate: '2025-10-01', dueDate: '2026-06-01' }, '5000');
+    const t4 = await mk({ number: 'T4', issueDate: '2025-10-01', dueDate: '2025-11-01' });
+    await s.agent.post(`/v1/purchases/${t4.id}/dispute`).send({ disputed: true }).expect(200);
+    const t5 = await mk({ number: 'T5', issueDate: '2026-01-20', dueDate: '2026-02-10' });
+    await s.ppay(t5.id, '2026-02-10', { amount: '1200' }).expect(201);
+    const t6 = await mk({ number: 'T6', issueDate: '2025-10-01', dueDate: '2025-11-01' });
+    await s.ppay(t6.id, '2025-12-10', { amount: '1200' }).expect(201);
+    const t7 = await mk({ number: 'T7', issueDate: '2025-12-20', dueDate: '2026-01-10' }, '833.33');
+    await s.ppay(t7.id, '2026-01-05', { amount: '400' }).expect(201);
+    await s.ppay(t7.id, '2026-02-05', { amount: '300' }).expect(201);
+    await mk({ number: 'T8', issueDate: '2025-10-01', dueDate: '2025-11-01' }, '1000').then(async (p) => {
+      await s.agent.post(`/v1/purchases/${p.id}/reopen`).expect(200);
+    });
+
+    const q = await s.report('payment-terms?period=2026-Q1');
+    expect(q).toMatchObject({ period: '2026-Q1', from: '2026-01-01', to: '2026-03-31', filingDeadline: '2026-04-30', monthlyIncrement: '0.85' });
+    expect(q.keyRates.at(-1)).toEqual({ from: '2025-03-18', rate: '2.25' });
+    expect(q.notices).toEqual(['PURCHASES_TO_APPROVE']);
+    const row = (n: string, status: string) => q.rows.find((r: { number: string; status: string }) => r.number === n && r.status === status);
+    expect(row('T1', 'PAID_LATE')).toMatchObject({ legalDueDate: '2026-01-15', settledOn: '2026-02-20', lateAmount: '1200.00', monthsLate: 2, ratePercent: '3.10', fine: '37.20', method: 'TRANSFER', totalGross: '1200.00', supplierIf: '777' });
+    expect(row('T2', 'UNPAID')).toMatchObject({ legalDueDate: '2025-12-01', settledOn: null, lateAmount: '2400.00', monthsLate: 4, ratePercent: '4.80', fine: '115.20', method: null, reference: null });
+    expect(row('T3', 'UNPAID')).toMatchObject({ legalDueDate: '2026-01-29', lateAmount: '6000.00', monthsLate: 3, ratePercent: '3.95', fine: '237.00' });
+    expect(row('T7', 'PAID_LATE')).toMatchObject({ lateAmount: '300.00', monthsLate: 2, ratePercent: '3.10', fine: '9.30' });
+    expect(row('T7', 'UNPAID')).toMatchObject({ lateAmount: '300.00', monthsLate: 3, ratePercent: '3.95', fine: '11.85' });
+    for (const n of ['T4', 'T5', 'T6', 'T8']) expect(q.rows.some((r: { number: string }) => r.number === n), n).toBe(false);
+    expect(q.disputed).toEqual([expect.objectContaining({ number: 'T4', supplierName: 'Fournisseur Rapport', amountDue: '1200.00' })]);
+    expect(q.totals).toEqual({ unpaidLate: '8700.00', paidLate: '1500.00', fine: '410.55', count: 5 });
+
+    const o = await s.report('payment-terms?period=2026-Q1&keyRate=3');
+    expect(o.notices).toEqual(['KEY_RATE_OVERRIDDEN', 'PURCHASES_TO_APPROVE'].sort((a, b) => o.notices.indexOf(a) - o.notices.indexOf(b)));
+    expect(o.keyRates).toEqual([{ from: '2026-01-01', rate: '3.00' }]);
+    expect(o.rows.find((r: { number: string; status: string }) => r.number === 'T1').fine).toBe('46.20');
+    const m = await s.report('payment-terms?period=2026-03');
+    expect(m.notices).toContain('PERIOD_NOT_QUARTER');
+    expect(m.rows.some((r: { number: string }) => r.number === 'T1')).toBe(false);
+    expect(m.rows.filter((r: { status: string }) => r.status === 'UNPAID')).toHaveLength(3);
+    const cur = new Date().toLocaleDateString('en-CA');
+    const quarter = `${cur.slice(0, 4)}-Q${Math.floor((Number(cur.slice(5, 7)) - 1) / 3) + 1}`;
+    expect((await s.report(`payment-terms?period=${quarter}`)).notices).toContain('PERIOD_NOT_OVER');
+    for (const bad of ['keyRate=abc', 'keyRate=-1']) expect((await s.agent.get(`/v1/reports/payment-terms?period=2026-Q1&${bad}`)).status).toBe(422);
+  });
+
+  it('validates the period and the parameters', async () => {
+    const s = await setupR();
+    for (const path of ['vat', 'withholdings', 'payment-terms']) {
+      for (const bad of ['', '?period=2026-13', '?period=2026-Q5', '?period=abc', '?period=2026-1', '?period=2026-11-01']) {
+        const r = await s.agent.get(`/v1/reports/${path}${bad}`);
+        expect([r.status, r.body.issues?.[0]?.path], `${path}${bad}`).toEqual([422, 'period']);
+      }
+    }
+    expect((await s.agent.get('/v1/reports/vat?period=2026-03&previousCredit=-5')).status).toBe(422);
+    expect((await s.agent.get('/v1/reports/vat?period=2026-03&previousCredit=x')).status).toBe(422);
+    expect((await s.agent.get('/v1/reports/vat?period=2024-02')).body.to).toBe('2024-02-29');
+  });
+
+  it('is readable by every role and isolated by workspace', async () => {
+    const a = await setupR();
+    const inv = await a.invoice([{ ...line, quantity: '1' }]);
+    await a.pay(inv.id, '2026-03-22', { amount: '900', vatWithheld: '150', taxWithheld: '50' });
+    const p = await a.purchase({ vatLines: [vl('20', '1000')] });
+    await a.ppay(p.id, '2026-03-19', { amount: '900', vatWithheld: '150', taxWithheld: '100' }).expect(201);
+    await a.purchase({ vatLines: [vl('20', '1000')], issueDate: '2025-10-01', dueDate: '2025-11-01' });
+    const b = await setupR();
+    expect((await b.report('vat?period=2026-03')).collected.totalVat).toBe('0.00');
+    expect((await b.report('vat?period=2026-03')).sales).toEqual([]);
+    const w = await b.report('withholdings?period=2026-03');
+    expect([w.onSuppliers.rows, w.byCustomers.rows]).toEqual([[], []]);
+    expect((await b.report('payment-terms?period=2026-Q1')).rows).toEqual([]);
+    for (const role of ['OWNER', 'ADMIN', 'MEMBER', 'ACCOUNTANT', 'VIEWER'] as const) {
+      const r = await asRole(role);
+      for (const path of ['vat?period=2026-03', 'withholdings?period=2026-03', 'payment-terms?period=2026-Q1']) {
+        expect((await r.agent.get(`/v1/reports/${path}`)).status, `${role} ${path}`).toBe(200);
+      }
+    }
+    expect((await anon.get('/v1/reports/vat?period=2026-03')).status).toBe(401);
   });
 });

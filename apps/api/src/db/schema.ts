@@ -15,7 +15,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { Address, Company, InvoiceTotals, LineInput, Party } from '@facture/core';
+import type { Address, Company, InvoiceTotals, LineInput, Party, PurchaseVatLine } from '@facture/core';
 
 const base = {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -44,6 +44,7 @@ export const companies = pgTable(
     tpNumber: text('tp_number'),
     cnssNumber: text('cnss_number'),
     vatRegime: text('vat_regime').notNull(),
+    vatBasis: text('vat_basis').notNull().default('CASH'),
     vatTaxPoint: text('vat_tax_point').notNull(),
     phone: text('phone'),
     email: text('email'),
@@ -131,11 +132,15 @@ export const payments = pgTable(
     paidOn: date('paid_on', { mode: 'string' }).notNull(),
     method: text('method').notNull(),
     amount: money('amount').notNull(),
+    vatWithheld: money('vat_withheld').notNull().default('0'),
+    taxWithheld: money('tax_withheld').notNull().default('0'),
     reference: text('reference'),
     voidedAt: timestamp('voided_at', { withTimezone: true }),
     voidedBy: uuid('voided_by'),
+    // No foreign key: a voided payment is immutable, so it must keep pointing at the line even if the import goes.
+    bankTransactionId: uuid('bank_transaction_id'),
   },
-  (t) => [index('payments_invoice_idx').on(t.invoiceId)],
+  (t) => [index('payments_invoice_idx').on(t.invoiceId), index('payments_bank_idx').on(t.bankTransactionId)],
 );
 
 export const numberingSequences = pgTable(
@@ -370,4 +375,101 @@ export const invitations = pgTable(
       .where(sql`${t.acceptedAt} is null and ${t.revokedAt} is null`),
     index('invitations_tenant_idx').on(t.tenantId, t.createdAt),
   ],
+);
+
+export const bankImports = pgTable('bank_imports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  fileName: text('file_name').notNull(),
+  accountLabel: text('account_label').notNull(),
+  importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
+  importedBy: uuid('imported_by'),
+  importedByName: text('imported_by_name'),
+  lineCount: integer('line_count').notNull(),
+  duplicateCount: integer('duplicate_count').notNull(),
+});
+
+export const bankTransactions = pgTable(
+  'bank_transactions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    importId: uuid('import_id')
+      .notNull()
+      .references(() => bankImports.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    date: date('date', { mode: 'string' }).notNull(),
+    label: text('label').notNull(),
+    amount: money('amount').notNull(),
+    reference: text('reference'),
+    hash: text('hash').notNull(),
+    status: text('status').notNull().default('UNMATCHED'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('bank_transactions_import_idx').on(t.importId, t.position),
+    index('bank_transactions_hash_idx').on(t.tenantId, t.hash),
+    index('bank_transactions_date_idx').on(t.tenantId, t.date),
+  ],
+);
+
+export const purchases = pgTable(
+  'purchases',
+  {
+    ...base,
+    supplierId: uuid('supplier_id')
+      .notNull()
+      .references(() => parties.id),
+    number: text('number').notNull(),
+    // Lower case, no whitespace: the duplicate check compares this.
+    numberKey: text('number_key').notNull(),
+    issueDate: date('issue_date', { mode: 'string' }).notNull(),
+    dueDate: date('due_date', { mode: 'string' }).notNull(),
+    category: text('category').notNull(),
+    description: text('description').notNull(),
+    vatLines: jsonb('vat_lines').$type<PurchaseVatLine[]>().notNull(),
+    vatDeductible: boolean('vat_deductible').notNull(),
+    notes: text('notes'),
+    totalNet: money('total_net').notNull(),
+    totalVat: money('total_vat').notNull(),
+    totalGross: money('total_gross').notNull(),
+    state: text('state').notNull(),
+    rejectionReason: text('rejection_reason'),
+    disputed: boolean('disputed').notNull().default(false),
+    disputedAt: timestamp('disputed_at', { withTimezone: true }),
+    disputeClearedAt: timestamp('dispute_cleared_at', { withTimezone: true }),
+    supplierSnapshot: jsonb('supplier_snapshot').$type<{ name: string; ice: string | null; ifNumber: string | null }>(),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    approvedBy: uuid('approved_by'),
+    approvedByName: text('approved_by_name'),
+    createdBy: uuid('created_by'),
+    createdByName: text('created_by_name'),
+    retainUntil: date('retain_until', { mode: 'string' }),
+  },
+  (t) => [
+    uniqueIndex('purchases_number_uq').on(t.tenantId, t.supplierId, t.numberKey),
+    index('purchases_issue_idx').on(t.tenantId, t.issueDate),
+    index('purchases_supplier_idx').on(t.supplierId),
+  ],
+);
+
+export const purchasePayments = pgTable(
+  'purchase_payments',
+  {
+    ...base,
+    purchaseId: uuid('purchase_id')
+      .notNull()
+      .references(() => purchases.id),
+    paidOn: date('paid_on', { mode: 'string' }).notNull(),
+    method: text('method').notNull(),
+    // Cash actually paid to the supplier; the withholdings go to the Treasury.
+    amount: money('amount').notNull(),
+    vatWithheld: money('vat_withheld').notNull(),
+    taxWithheld: money('tax_withheld').notNull(),
+    reference: text('reference'),
+    createdBy: uuid('created_by'),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: uuid('voided_by'),
+  },
+  (t) => [index('purchase_payments_purchase_idx').on(t.purchaseId), index('purchase_payments_paid_idx').on(t.tenantId, t.paidOn)],
 );

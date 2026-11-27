@@ -16,6 +16,9 @@ export const getDashboard = cache(() => api.dashboard());
 
 export const getMe = cache(() => api.me());
 
+/** Bank lines waiting for a match, for the sidebar badge and the dashboard. */
+export const getBankToMatch = cache(async () => (await api.bankTransactions({ status: "UNMATCHED", pageSize: "1" })).counts.UNMATCHED);
+
 /** The signed-in user's email, or null when signed out. Never redirects: used by public pages. */
 export async function signedInEmail(): Promise<string | null> {
   try {
@@ -27,3 +30,6 @@ export async function signedInEmail(): Promise<string | null> {
     return null;
   }
 }
+
+/** Purchase invoices waiting for an approval, for the sidebar badge and the dashboard. */
+export const getPurchaseOverview = cache(async () => (await api.purchases({ pageSize: "1" })).overview);

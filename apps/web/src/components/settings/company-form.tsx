@@ -193,6 +193,7 @@ export function CompanyForm({ company }: { company: Company | null }) {
       tpNumber: opt(v.tpNumber),
       cnssNumber: opt(v.cnssNumber),
       vatRegime: v.vatRegime,
+      vatBasis: company?.vatBasis ?? "CASH",
       vatTaxPoint: v.vatTaxPoint,
       phone: opt(v.phone),
       email: opt(v.email),

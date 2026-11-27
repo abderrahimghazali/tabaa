@@ -240,11 +240,11 @@ gantt
     Comptes, double authentification, journal :done, 2026-11-24, 3d
     Envoi par e-mail, relances               :done, 2026-11-27, 1d
     Équipe, rôles, accès expert-comptable    :done, 2026-11-27, 1d
+    Import bancaire et rapprochement         :done, 2026-11-27, 1d
+    Factures d'achat et validation           :done, 2026-11-27, 1d
     section Ensuite
-    Import bancaire et rapprochement         :2027-01-05, 5w
     TVA, retenue à la source, relevés        :2027-01-26, 6w
     Délais de paiement, loi 69-21            :2027-02-16, 5w
-    Factures d'achat et validation           :2027-03-09, 8w
     section DGI
     Connecteur, à la publication des spécifications :milestone, 2027-06-01, 0d
 ```

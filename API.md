@@ -114,6 +114,86 @@ Permissions:
 - Closing a workspace deletes only the user accounts that belong to no other workspace; other members just lose that membership.
 - Team changes are audited (`team.invited`, `team.invitation_revoked`, `team.joined`, `team.role_changed`, `team.member_removed`) and the person concerned receives an email (invited, role changed, removed).
 
+## Bank import and reconciliation
+
+The browser parses the bank's file (CSV, any column layout) and posts normalised lines; the API never receives the file. Amounts are signed: positive is money received.
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| POST | `/bank/imports` | `BankImportInput` | `BankImport` | Lines identical (date, amount, label, reference) to an existing line of the workspace are skipped and counted in `duplicateCount`; duplicates inside the same file are kept (two identical transfers on one day are real) |
+| GET | `/bank/imports` | | `BankImport[]` | Newest first |
+| DELETE | `/bank/imports/:id` | | 204 | Removes the import and its lines. 409 `HAS_MATCHES` if any line is matched |
+| GET | `/bank/transactions?status=&q=&importId=&page=&pageSize=` | | `BankTransactionList` | Newest first; `q` searches label and reference; `pageSize` max 100, default 50. `suggestions` only on UNMATCHED lines with a positive amount |
+| POST | `/bank/transactions/:id/match` | `BankMatchInput` | `BankTransaction` | Records one payment per allocation, dated the line's date, with the line's reference (or label, truncated) as payment reference. Rules below |
+| POST | `/bank/transactions/:id/unmatch` | | `BankTransaction` | Voids the payments recorded from this line (same rules and roles as voiding a payment) and returns the line to UNMATCHED |
+| POST | `/bank/transactions/:id/ignore` | | `BankTransaction` | UNMATCHED only (bank fees, transfers between own accounts, outgoing payments) |
+| POST | `/bank/transactions/:id/unignore` | | `BankTransaction` | |
+
+- Match rules: the line must be UNMATCHED with a positive amount (409 `NOT_MATCHABLE`); each invoice must be issued and not a credit note; each allocation > 0 and ≤ that invoice's amount due (409 `OVERPAYMENT`); the allocations' sum ≤ the line's amount (422). A line may be partly allocated: it is MATCHED all the same, the rest being the user's business (fees, rounding).
+- Suggestions, best first, at most 5: the invoice number appears in the label or reference (ignoring case, spaces and dashes); the amount due equals the line's amount; the customer's name appears in the label. Only open issued invoices.
+- Everything is one transaction per call; an invoice's payment status and the dashboard follow as with a manual payment. Payments recorded from a line show the bank line in the invoice's activity.
+- Roles: import, match, ignore: OWNER, ADMIN, MEMBER. Unmatch and delete import: OWNER, ADMIN. Read: every role.
+- Audited: `bank.imported`, `bank.matched`, `bank.unmatched`, `bank.ignored`, `bank.import_deleted`. Bank lines are deleted on workspace closure with the rest of the workspace's working data; payments recorded from them stay with their invoices.
+
+## Purchase invoices
+
+Suppliers are parties with `kind` SUPPLIER or BOTH (existing `/parties` routes).
+
+| Method | Path | Body | Returns | Notes |
+|---|---|---|---|---|
+| GET | `/purchases?state=&paymentStatus=&overdue=&supplierId=&q=&from=&to=&page=&pageSize=` | | `PurchaseList` | Newest issue date first; `q` searches number, supplier name and description; `from`/`to` on issue date; `pageSize` max 100, default 50 |
+| POST | `/purchases` | `PurchaseInput` | `Purchase` | State TO_APPROVE. 409 `DUPLICATE` when this supplier already has an invoice with this number (compared ignoring case and spaces). 422 when the party is not a supplier |
+| GET | `/purchases/:id` | | `Purchase` | |
+| PUT | `/purchases/:id` | `PurchaseInput` | `Purchase` | TO_APPROVE or REJECTED only (409 `NOT_EDITABLE`); editing a rejected invoice returns it to TO_APPROVE |
+| DELETE | `/purchases/:id` | | 204 | TO_APPROVE or REJECTED only |
+| POST | `/purchases/:id/approve` | | `Purchase` | Freezes the supplier snapshot |
+| POST | `/purchases/:id/reject` | `RejectPurchaseInput` | `Purchase` | From TO_APPROVE |
+| POST | `/purchases/:id/reopen` | | `Purchase` | APPROVED → TO_APPROVE, only without active payments (409 `HAS_PAYMENTS`) |
+| POST | `/purchases/:id/dispute` | `DisputePurchaseInput` | `Purchase` | APPROVED only |
+| POST | `/purchases/:id/payments` | `PurchasePaymentInput` | `Purchase` | APPROVED only (409 `NOT_APPROVED`). `amount` > 0 or a withholding > 0; `amount + vatWithheld + taxWithheld` ≤ amount due (409 `OVERPAYMENT`); `vatWithheld` ≤ the invoice's VAT not yet withheld; `paidOn` not before the issue date |
+| DELETE | `/purchases/:id/payments/:paymentId` | | `Purchase` | Voids the payment (kept, like sales payments) |
+
+- Amounts: each `vatLines[].vat` must be within 1.00 MAD of `net × vatRate / 100` (suppliers round differently), and `vatRate` must be a rate of the active rule package; totals are the sums. All amounts ≥ 0; the gross total > 0. `dueDate` ≥ `issueDate`.
+- `overdue`: APPROVED, something due, due date passed, not disputed.
+- `warnings` never block. `CASH_LIMIT` uses the rule package's `cashLimitPerDay` / `cashLimitPerMonth` over the active CASH payments made to the same supplier on the same day / in the same calendar month, across all its invoices. `TERM_TOO_LONG` uses `maxPaymentTermDays`.
+- Roles: create, edit, record payments, dispute: OWNER, ADMIN, MEMBER. Approve, reject, reopen, delete, void a payment: OWNER, ADMIN. Read: every role. A MEMBER may not approve, including their own entries.
+- Audited: `purchase.created`, `purchase.updated`, `purchase.deleted`, `purchase.approved`, `purchase.rejected`, `purchase.reopened`, `purchase.disputed`, `purchase.payment_recorded`, `purchase.payment_voided`.
+- Kept for the retention period like sales invoices: workspace closure keeps approved purchase invoices and their payments (pseudonymising user names) and deletes the unapproved ones; the retention purge removes them with the rest.
+- Included in the data export.
+
+## Withholding on sales payments
+
+`PaymentInput` (and `BankMatchInput` allocations stay cash-only) accepts `vatWithheld` and `taxWithheld`, default 0. A payment settles `amount + vatWithheld + taxWithheld`: that sum must be ≤ the amount due, `vatWithheld` ≤ the invoice's VAT not yet withheld, and at least one of the three > 0. Everywhere an invoice's paid amount, amount due and payment status are computed, the settled sum counts. "Collected" figures on the dashboard remain cash (`amount`) only.
+
+## Reports
+
+All three are working papers computed on demand; nothing is stored and nothing is filed. `period` is a month (`2026-11`) or a quarter (`2026-Q4`). Every role can read them.
+
+| Method | Path | Returns | Notes |
+|---|---|---|---|
+| GET | `/reports/vat?period=&previousCredit=` | `VatStatement` | `previousCredit` (Decimal ≥ 0, default 0) is the credit carried from the previous return |
+| GET | `/reports/withholdings?period=` | `WithholdingStatement` | |
+| GET | `/reports/payment-terms?period=&keyRate=` | `PaymentTermsStatement` | `keyRate` (percent) replaces the rule package's key-rate history for the whole computation |
+
+**VAT statement.** Rounding to 2 decimals at the end of each aggregate, decimal arithmetic throughout.
+- Collected, basis CASH (`Company.vatBasis`): each active payment received in the period on an issued invoice counts for `settled / invoice gross excluding stamp duty` of each of the invoice's per-rate bases and VAT (stamp duty is not turnover; withheld VAT is still collected VAT, it reappears in `withheldByCustomers`). Basis ACCRUAL: invoices issued in the period count in full at their issue date.
+- Credit notes count negatively at their issue date in both bases.
+- 0 % bases go to `exemptBase`, not `byRate`.
+- Deductible: each active payment made in the period on an APPROVED purchase with `vatDeductible` counts for `settled / purchase gross` of each VAT line, into `services`, `goods` or `fixedAssets` by category, and produces the matching `deductions` rows. Payment-based whatever the basis (the right to deduct arises with payment).
+- `vatDue` / `creditCarriedForward` per the schema comment.
+- `filingDeadline`: last day of the month after the period.
+- Notices: `NOT_SUBJECT` (company not subject to VAT: figures still computed), `PERIOD_MISMATCH` (monthly regime asked a quarter or the reverse), `PERIOD_NOT_OVER`, `PURCHASES_TO_APPROVE` (purchases issued up to the period's end still to approve), `CASH_LIMIT` (a deduction row comes from a purchase carrying that warning).
+
+**Withholding statement.** Rows are active payments of the period with a non-zero withholding: on purchases (`onSuppliers`, to remit) and on sales (`byCustomers`, credits). `remittanceDeadline`: last day of the month after the period's last month.
+
+**Payment terms statement (law 69-21).** Approved, non-disputed purchases only.
+- `legalDueDate` = the earlier of the invoice's due date and issue date + `maxPaymentTermDays`.
+- A row exists when part of the invoice was settled after `legalDueDate` by a payment dated in the period (`PAID_LATE`, one row per such payment, `lateAmount` = its settled sum), or is still unpaid at the period's end with `legalDueDate` before it (`UNPAID`, `lateAmount` = amount due at the period's end).
+- `monthsLate`: calendar months started between `legalDueDate` and `settledOn` (or the period's end), minimum 1.
+- `ratePercent` = key rate in force on the last day of the first month of delay + `latePaymentMonthlyIncrement` × (`monthsLate` − 1). `fine` = `lateAmount` × `ratePercent` / 100.
+- `filingDeadline`: last day of the month after the quarter. Notices: `PERIOD_NOT_QUARTER` (a month was asked: figures still computed), `PERIOD_NOT_OVER`, `PURCHASES_TO_APPROVE`, `KEY_RATE_OVERRIDDEN`.
+- The fine is recomputed in full each time: it does not subtract what an earlier declaration already covered.
+
 ## Invoice PDF
 
 The web server renders the PDF from the same invoice sheet users see (headless Chromium), then stores the file of an issued invoice through the API so it never changes afterwards.

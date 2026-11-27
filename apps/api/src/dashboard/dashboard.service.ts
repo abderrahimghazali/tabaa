@@ -37,7 +37,7 @@ export class DashboardService {
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
     const monthPayments = await tx
-      .select({ amount: payments.amount, totalVat: invoices.totalVat, amountDue: invoices.amountDue })
+      .select({ amount: payments.amount, vatWithheld: payments.vatWithheld, taxWithheld: payments.taxWithheld, totalVat: invoices.totalVat, amountDue: invoices.amountDue })
       .from(payments)
       .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
       .where(and(isNull(payments.voidedAt), gte(payments.paidOn, monthStart), lt(payments.paidOn, nextMonth)));
@@ -142,7 +142,7 @@ export class DashboardService {
           (a, p) =>
             new Decimal(p.amountDue).isZero()
               ? a
-              : a.plus(new Decimal(p.amount).times(p.totalVat).div(p.amountDue).toDecimalPlaces(2)),
+              : a.plus(new Decimal(p.amount).plus(p.vatWithheld).plus(p.taxWithheld).times(p.totalVat).div(p.amountDue).toDecimalPlaces(2)),
           new Decimal(0),
         ),
       ),

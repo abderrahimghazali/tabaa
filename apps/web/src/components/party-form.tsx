@@ -17,13 +17,18 @@ import { issuesAt } from "@/lib/result";
 const TYPES = ["BUSINESS", "PUBLIC", "CONSUMER", "FOREIGN"] as const;
 const opt = (s: string) => (s.trim() ? s.trim() : undefined);
 
+type PartyKind = Party["kind"];
+const KINDS = ["CUSTOMER", "SUPPLIER", "BOTH"] as const;
+
 export function PartyForm({
   initial,
+  defaultKind = "CUSTOMER",
   formId,
   onSaved,
   onPending,
 }: {
   initial?: Party;
+  defaultKind?: PartyKind;
   formId: string;
   onSaved: (party: Party) => void;
   onPending?: (pending: boolean) => void;
@@ -32,6 +37,7 @@ export function PartyForm({
   const [, start] = useTransition();
   const [error, setError] = useState<ApiError | null>(null);
   const [v, setV] = useState({
+    kind: (initial?.kind ?? defaultKind) as PartyKind,
     type: initial?.type ?? "BUSINESS",
     name: initial?.name ?? "",
     ice: digits(initial?.ice ?? ""),
@@ -46,6 +52,7 @@ export function PartyForm({
     term: initial?.paymentTermDays?.toString() ?? "",
   });
   const set = <K extends keyof typeof v>(k: K, val: (typeof v)[K]) => setV((s) => ({ ...s, [k]: val }));
+  const supplier = v.kind === "SUPPLIER";
   const iceCheck = v.ice ? validateIce(v.ice) : null;
   const iceError = issuesAt(error, "ice") ?? (iceCheck && !iceCheck.valid ? t("ice.invalid", { n: v.ice.length }) : undefined);
   const err = (path: string) => issuesAt(error, path);
@@ -53,7 +60,7 @@ export function PartyForm({
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const input: PartyInput = {
-      kind: initial?.kind ?? "CUSTOMER",
+      kind: v.kind,
       type: v.type,
       name: v.name.trim(),
       ice: opt(v.ice),
@@ -75,7 +82,7 @@ export function PartyForm({
       const res = initial ? await updateParty(initial.id, input) : await createParty(input);
       onPending?.(false);
       if (res.ok) {
-        toast.success(initial ? t("customers.updated") : t("customers.created"));
+        toast.success(supplier ? t(initial ? "suppliers.updated" : "suppliers.created") : t(initial ? "customers.updated" : "customers.created"));
         onSaved(res.data);
       } else setError(res.error);
     });
@@ -95,10 +102,17 @@ export function PartyForm({
           title={error.code === "VALIDATION" ? t("error.fixFields") : error.message}
         />
       )}
-      <Select label={t("customers.type")} selectedKey={v.type} onSelectionChange={(k) => set("type", String(k) as typeof v.type)}>
+      <Select label={t("partyKind.label")} selectedKey={v.kind} onSelectionChange={(k) => k && set("kind", String(k) as PartyKind)}>
+        {KINDS.map((x) => (
+          <SelectItem key={x} id={x} textValue={t(`partyKind.${x}`)}>
+            {t(`partyKind.${x}`)}
+          </SelectItem>
+        ))}
+      </Select>
+      <Select label={t(supplier ? "suppliers.type" : "customers.type")} selectedKey={v.type} onSelectionChange={(k) => set("type", String(k) as typeof v.type)}>
         {TYPES.map((x) => (
-          <SelectItem key={x} id={x} textValue={t(`partyType.${x}`)}>
-            {t(`partyType.${x}`)}
+          <SelectItem key={x} id={x} textValue={t(x === "FOREIGN" && supplier ? "partyType.FOREIGN.supplier" : `partyType.${x}`)}>
+            {t(x === "FOREIGN" && supplier ? "partyType.FOREIGN.supplier" : `partyType.${x}`)}
           </SelectItem>
         ))}
       </Select>
@@ -131,7 +145,7 @@ export function PartyForm({
       </div>
       <NumberField
         label={t("customers.term")}
-        hint={err("paymentTermDays") ?? t("customers.termHint")}
+        hint={err("paymentTermDays") ?? t(v.kind === "CUSTOMER" ? "customers.termHint" : "suppliers.termHint")}
         isInvalid={!!err("paymentTermDays")}
         minValue={0}
         maxValue={180}
@@ -163,26 +177,30 @@ export function PartyDrawer({
   isOpen,
   onOpenChange,
   party,
+  defaultKind,
   onSaved,
   onDelete,
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   party?: Party;
+  defaultKind?: PartyKind;
   onSaved?: (party: Party) => void;
   onDelete?: () => void;
 }) {
   const t = useT();
   const [pending, setPending] = useState(false);
+  const newTitle = t((party?.kind ?? defaultKind) === "SUPPLIER" ? "suppliers.new" : "customers.new");
   return (
-    <Drawer isOpen={isOpen} onOpenChange={onOpenChange} placement="end" aria-label={party ? party.name : t("customers.new")}>
+    <Drawer isOpen={isOpen} onOpenChange={onOpenChange} placement="end" aria-label={party ? party.name : newTitle}>
       {({ close }) => (
         <>
-          <DrawerHeader title={party ? party.name : t("customers.new")} closeLabel={t("common.close")} />
+          <DrawerHeader title={party ? party.name : newTitle} closeLabel={t("common.close")} />
           <DrawerBody>
             <PartyForm
               formId="party-form"
               initial={party}
+              defaultKind={defaultKind}
               onPending={setPending}
               onSaved={(p) => {
                 close();

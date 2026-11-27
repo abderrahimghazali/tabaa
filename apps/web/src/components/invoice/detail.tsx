@@ -512,7 +512,7 @@ function PaymentForm({
     e.preventDefault();
     setError(null);
     onPending(true);
-    const res = await addPayment(invoice.id, { paidOn, method, amount: amount || "0", reference: reference.trim() || undefined });
+    const res = await addPayment(invoice.id, { paidOn, method, amount: amount || "0", vatWithheld: "0", taxWithheld: "0", reference: reference.trim() || undefined });
     onPending(false);
     if (res.ok) onSaved();
     else setError(res.error);

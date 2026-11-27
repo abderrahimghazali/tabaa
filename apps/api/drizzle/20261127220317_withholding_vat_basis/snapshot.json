@@ -1,0 +1,115 @@
+{
+  "type": "diff",
+  "version": "10",
+  "dialect": "postgres",
+  "id": "b65539f9-c6f2-42ff-bf4a-b25e31b7da86",
+  "prevIds": [
+    "693a38f0-8871-4ba9-bc4e-bec752201d5a"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "companies",
+        "vat_basis"
+      ],
+      "writes": [
+        "s|col|public.companies.vat_basis",
+        "n|col|public.companies.vat_basis",
+        "e|col|public.companies.vat_basis"
+      ],
+      "reads": [
+        "n|tbl|public.companies",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "payments",
+        "vat_withheld"
+      ],
+      "writes": [
+        "s|col|public.payments.vat_withheld",
+        "n|col|public.payments.vat_withheld",
+        "e|col|public.payments.vat_withheld"
+      ],
+      "reads": [
+        "n|tbl|public.payments",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "payments",
+        "tax_withheld"
+      ],
+      "writes": [
+        "s|col|public.payments.tax_withheld",
+        "n|col|public.payments.tax_withheld",
+        "e|col|public.payments.tax_withheld"
+      ],
+      "reads": [
+        "n|tbl|public.payments",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "companies",
+        "name": "vat_basis",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'CASH'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "payments",
+        "name": "vat_withheld",
+        "type": "numeric(18,2)",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'0'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "payments",
+        "name": "tax_withheld",
+        "type": "numeric(18,2)",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'0'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

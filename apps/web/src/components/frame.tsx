@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
-import { RiBox3Line, RiFileList3Line, RiGroupLine, RiHome5Line, RiMenuLine } from "@remixicon/react";
+import { RiBankLine, RiBox3Line, RiShoppingBag3Line, RiTruckLine, RiFileList3Line, RiGroupLine, RiHome5Line, RiMenuLine } from "@remixicon/react";
 import { DashboardSidebar, type DashboardNavItem } from "@/components/application/dashboard/dashboard-sidebar";
 import { Counter } from "@/components/base/badges/counter";
 import { Breadcrumb, BreadcrumbItem } from "@/components/base/breadcrumb/breadcrumb";
@@ -39,6 +39,9 @@ const SEGMENTS: Record<string, Key> = {
   clients: "nav.customers",
   articles: "nav.items",
   parametres: "nav.settings",
+  banque: "nav.bank",
+  achats: "nav.purchases",
+  fournisseurs: "nav.suppliers",
   compte: "settings.account",
   securite: "settings.security",
   equipe: "settings.team",
@@ -79,7 +82,7 @@ function Topbar() {
   );
 }
 
-function Navigation({ me, drafts, overdue, mobile, onClose }: { me: Me; drafts: number; overdue: number; mobile?: boolean; onClose?: () => void }) {
+function Navigation({ me, drafts, overdue, bank, toApprove, mobile, onClose }: { me: Me; drafts: number; overdue: number; bank: number; toApprove: number; mobile?: boolean; onClose?: () => void }) {
   const { t } = useI18n();
   const pathname = usePathname();
   const openPalette = usePaletteTrigger();
@@ -97,7 +100,22 @@ function Navigation({ me, drafts, overdue, mobile, onClose }: { me: Me; drafts: 
         </>
       ),
     },
+    {
+      key: "bank",
+      label: t("nav.bank"),
+      icon: RiBankLine,
+      href: "/banque",
+      badge: bank > 0 ? <Counter color="neutral" title={t("bank.badge")}>{bank}</Counter> : undefined,
+    },
+    {
+      key: "purchases",
+      label: t("nav.purchases"),
+      icon: RiShoppingBag3Line,
+      href: "/achats",
+      badge: toApprove > 0 ? <Counter color="neutral" title={t("purchases.badge")}>{toApprove}</Counter> : undefined,
+    },
     { key: "customers", label: t("nav.customers"), icon: RiGroupLine, href: "/clients" },
+    { key: "suppliers", label: t("nav.suppliers"), icon: RiTruckLine, href: "/fournisseurs" },
     { key: "items", label: t("nav.items"), icon: RiBox3Line, href: "/articles" },
   ];
   const selected =
@@ -116,7 +134,7 @@ function Navigation({ me, drafts, overdue, mobile, onClose }: { me: Me; drafts: 
   );
 }
 
-export function Frame({ me, drafts, overdue, children }: { me: Me; drafts: number; overdue: number; children: React.ReactNode }) {
+export function Frame({ me, drafts, overdue, bank, toApprove, children }: { me: Me; drafts: number; overdue: number; bank: number; toApprove: number; children: React.ReactNode }) {
   const { t } = useI18n();
   const [label, setLabel] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -128,7 +146,7 @@ export function Frame({ me, drafts, overdue, children }: { me: Me; drafts: numbe
       <CrumbCtx value={{ label, set: setLabel }}>
         <div className="min-h-dvh bg-background-full nav:flex">
           <div className="sticky top-0 hidden h-dvh shrink-0 p-3 nav:block">
-            <Navigation me={me} drafts={drafts} overdue={overdue} />
+            <Navigation me={me} drafts={drafts} overdue={overdue} bank={bank} toApprove={toApprove} />
           </div>
 
           <div className="min-w-0 flex-1">
@@ -139,7 +157,7 @@ export function Frame({ me, drafts, overdue, children }: { me: Me; drafts: numbe
               </span>
               <IconButton icon={RiMenuLine} aria-label={t("nav.menu")} onClick={() => setMenuOpen(true)} />
               <Drawer isOpen={menuOpen} onOpenChange={setMenuOpen} placement="start" size="sm" aria-label={t("nav.menu")} className="rounded-3xl border-0 bg-transparent py-0 shadow-none">
-                <Navigation me={me} drafts={drafts} overdue={overdue} mobile onClose={() => setMenuOpen(false)} />
+                <Navigation me={me} drafts={drafts} overdue={overdue} bank={bank} toApprove={toApprove} mobile onClose={() => setMenuOpen(false)} />
               </Drawer>
             </header>
             <Topbar />

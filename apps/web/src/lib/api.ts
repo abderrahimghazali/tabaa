@@ -25,6 +25,15 @@ import {
   type TeamMember,
   type InvitationPreview,
   type Role,
+  type BankImport,
+  type BankImportInput,
+  type BankMatchInput,
+  type BankTransaction,
+  type BankTransactionList,
+  type Purchase,
+  type PurchaseInput,
+  type PurchaseList,
+  type PurchasePaymentInput,
 } from "@facture/core";
 
 const BASE = `${apiRoot()}/v1`;
@@ -123,6 +132,30 @@ export const api = {
     call<TeamMember>(`/team/members/${seg(userId)}`, { method: "PATCH", body: body({ role }) }),
   removeMember: (userId: string) => call<void>(`/team/members/${seg(userId)}`, { method: "DELETE" }),
   invitationPreview: (token: string) => call<InvitationPreview>(`/auth/invitations/${seg(token)}`),
+
+  bankImports: () => call<BankImport[]>("/bank/imports"),
+  importBank: (input: BankImportInput) => call<BankImport>("/bank/imports", { method: "POST", body: body(input) }),
+  deleteBankImport: (id: string) => call<void>(`/bank/imports/${seg(id)}`, { method: "DELETE" }),
+  bankTransactions: (params: { status?: string; q?: string; importId?: string; page?: string; pageSize?: string } = {}) =>
+    call<BankTransactionList>(`/bank/transactions${qs(params)}`),
+  bankMatch: (id: string, input: BankMatchInput) =>
+    call<BankTransaction>(`/bank/transactions/${seg(id)}/match`, { method: "POST", body: body(input) }),
+  bankUnmatch: (id: string) => call<BankTransaction>(`/bank/transactions/${seg(id)}/unmatch`, { method: "POST" }),
+  bankIgnore: (id: string) => call<BankTransaction>(`/bank/transactions/${seg(id)}/ignore`, { method: "POST" }),
+  bankUnignore: (id: string) => call<BankTransaction>(`/bank/transactions/${seg(id)}/unignore`, { method: "POST" }),
+
+  purchases: (params: { state?: string; paymentStatus?: string; overdue?: string; supplierId?: string; q?: string; from?: string; to?: string; page?: string; pageSize?: string } = {}) =>
+    call<PurchaseList>(`/purchases${qs(params)}`),
+  purchase: (id: string) => call<Purchase>(`/purchases/${seg(id)}`),
+  createPurchase: (input: PurchaseInput) => call<Purchase>("/purchases", { method: "POST", body: body(input) }),
+  updatePurchase: (id: string, input: PurchaseInput) => call<Purchase>(`/purchases/${seg(id)}`, { method: "PUT", body: body(input) }),
+  deletePurchase: (id: string) => call<void>(`/purchases/${seg(id)}`, { method: "DELETE" }),
+  approvePurchase: (id: string) => call<Purchase>(`/purchases/${seg(id)}/approve`, { method: "POST" }),
+  rejectPurchase: (id: string, reason: string) => call<Purchase>(`/purchases/${seg(id)}/reject`, { method: "POST", body: body({ reason }) }),
+  reopenPurchase: (id: string) => call<Purchase>(`/purchases/${seg(id)}/reopen`, { method: "POST" }),
+  disputePurchase: (id: string, disputed: boolean) => call<Purchase>(`/purchases/${seg(id)}/dispute`, { method: "POST", body: body({ disputed }) }),
+  payPurchase: (id: string, input: PurchasePaymentInput) => call<Purchase>(`/purchases/${seg(id)}/payments`, { method: "POST", body: body(input) }),
+  voidPurchasePayment: (id: string, paymentId: string) => call<Purchase>(`/purchases/${seg(id)}/payments/${seg(paymentId)}`, { method: "DELETE" }),
 
   dashboard: () => call<Dashboard>("/dashboard"),
 

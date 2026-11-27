@@ -3,10 +3,11 @@ import { Audited } from '../audit/audited.js';
 import { Roles } from '../common/roles.js';
 import { dto } from '../common/util.js';
 import { CompanyService } from '../company/company.service.js';
-import { payments } from '../db/schema.js';
+import { payments, purchasePayments } from '../db/schema.js';
 import { TenantDb } from '../db/tenant-db.js';
 import { InvoicesService } from '../invoices/invoices.service.js';
 import { ItemsService } from '../items/items.service.js';
+import { PurchasesService } from '../purchases/purchases.service.js';
 import { PartiesService } from '../parties/parties.service.js';
 
 @Controller('export')
@@ -17,6 +18,7 @@ export class ExportController {
     @Inject(PartiesService) private readonly parties: PartiesService,
     @Inject(ItemsService) private readonly items: ItemsService,
     @Inject(InvoicesService) private readonly invoices: InvoicesService,
+    @Inject(PurchasesService) private readonly purchases: PurchasesService,
   ) {}
 
   @Get()
@@ -36,6 +38,8 @@ export class ExportController {
       items: await this.items.list(),
       invoices,
       payments: allPayments.map((p) => dto(p)),
+      purchases: await this.purchases.exportAll(),
+      purchasePayments: (await this.t.tx.select().from(purchasePayments)).map((p) => dto(p)),
     };
   }
 }

@@ -18,6 +18,9 @@ export const Language = z.enum(["fr", "ar", "fr-ar"]);
 export type Language = z.infer<typeof Language>;
 
 export const VatRegime = z.enum(["MONTHLY", "QUARTERLY", "NOT_SUBJECT"]);
+// When VAT becomes due: on payment received (the default regime) or on invoicing (on option).
+export const VatBasis = z.enum(["CASH", "ACCRUAL"]);
+export type VatBasis = z.infer<typeof VatBasis>;
 export const VatTaxPoint = z.enum(["RECEIPTS", "DEBITS"]);
 
 export const CompanyInput = z.object({
@@ -32,6 +35,7 @@ export const CompanyInput = z.object({
   tpNumber: z.string().optional(),
   cnssNumber: z.string().optional(),
   vatRegime: VatRegime.default("MONTHLY"),
+  vatBasis: VatBasis.default("CASH"),
   vatTaxPoint: VatTaxPoint.default("RECEIPTS"),
   phone: z.string().optional(),
   email: z.email().optional(),
@@ -147,7 +151,11 @@ export const Payment = z.object({
   invoiceId: Id,
   paidOn: IsoDate,
   method: PaymentMethod,
+  // Cash received. What settles the invoice is amount + vatWithheld + taxWithheld.
   amount: Decimal,
+  // Withheld by the customer and paid to the Treasury on the company's behalf: a tax credit, not a discount.
+  vatWithheld: Decimal.default("0"),
+  taxWithheld: Decimal.default("0"),
   reference: z.string().optional(),
 });
 export type Payment = z.infer<typeof Payment>;
@@ -395,3 +403,335 @@ export type AcceptInvitationInput = z.infer<typeof AcceptInvitationInput>;
 
 export const SwitchTenantInput = z.object({ tenantId: Id });
 export type SwitchTenantInput = z.infer<typeof SwitchTenantInput>;
+
+// Bank statement import and reconciliation. The browser parses the bank's file
+// and sends normalised lines; the file itself never reaches the server.
+export const BankLineInput = z.object({
+  date: IsoDate,
+  label: z.string().min(1).max(300),
+  // Signed: positive is money received, negative is money paid out.
+  amount: Decimal,
+  reference: z.string().max(100).optional(),
+});
+export type BankLineInput = z.infer<typeof BankLineInput>;
+
+export const BankImportInput = z.object({
+  fileName: z.string().min(1).max(200),
+  accountLabel: z.string().max(100).default(""),
+  lines: z.array(BankLineInput).min(1).max(2000),
+});
+export type BankImportInput = z.infer<typeof BankImportInput>;
+
+export const BankImport = z.object({
+  id: Id,
+  fileName: z.string(),
+  accountLabel: z.string(),
+  importedAt: z.string(),
+  importedByName: z.string().nullable(),
+  lineCount: z.number().int(),
+  // Lines already present from an earlier import, skipped.
+  duplicateCount: z.number().int(),
+  matchedCount: z.number().int(),
+});
+export type BankImport = z.infer<typeof BankImport>;
+
+export const BankTransactionStatus = z.enum(["UNMATCHED", "MATCHED", "IGNORED"]);
+export type BankTransactionStatus = z.infer<typeof BankTransactionStatus>;
+
+// An open invoice the server thinks this line could pay, best first.
+export const BankSuggestion = z.object({
+  invoiceId: Id,
+  number: z.string(),
+  customerName: z.string(),
+  dueDate: IsoDate,
+  amountDue: Decimal,
+  // Why it is suggested: the invoice number is in the label, the amount equals what is due, the customer name is in the label.
+  reasons: z.array(z.enum(["NUMBER", "AMOUNT", "CUSTOMER"])).min(1),
+});
+export type BankSuggestion = z.infer<typeof BankSuggestion>;
+
+export const BankTransaction = z.object({
+  id: Id,
+  importId: Id,
+  accountLabel: z.string(),
+  date: IsoDate,
+  label: z.string(),
+  amount: Decimal,
+  reference: z.string().nullable(),
+  status: BankTransactionStatus,
+  // Payments recorded from this line (empty unless MATCHED).
+  allocations: z.array(
+    z.object({ paymentId: Id, invoiceId: Id, number: z.string(), customerName: z.string(), amount: Decimal }),
+  ),
+  // Only for UNMATCHED lines with a positive amount; at most 5.
+  suggestions: z.array(BankSuggestion),
+});
+export type BankTransaction = z.infer<typeof BankTransaction>;
+
+export const BankTransactionList = z.object({
+  items: z.array(BankTransaction),
+  total: z.number().int(),
+  counts: z.object({ UNMATCHED: z.number().int(), MATCHED: z.number().int(), IGNORED: z.number().int() }),
+});
+export type BankTransactionList = z.infer<typeof BankTransactionList>;
+
+export const BankMatchInput = z.object({
+  method: PaymentMethod.default("TRANSFER"),
+  allocations: z.array(z.object({ invoiceId: Id, amount: Decimal })).min(1).max(20),
+});
+export type BankMatchInput = z.infer<typeof BankMatchInput>;
+
+// Purchase invoices (factures d'achat): what suppliers bill the company.
+// GOODS and SERVICES are non-capitalised purchases; FIXED_ASSET is an immobilisation.
+// The split follows the deductible-VAT lines of the periodic VAT return.
+export const PurchaseCategory = z.enum(["GOODS", "SERVICES", "FIXED_ASSET"]);
+export type PurchaseCategory = z.infer<typeof PurchaseCategory>;
+
+export const PurchaseState = z.enum(["TO_APPROVE", "APPROVED", "REJECTED"]);
+export type PurchaseState = z.infer<typeof PurchaseState>;
+
+// Amounts as printed on the supplier's invoice, one line per VAT rate.
+export const PurchaseVatLine = z.object({ vatRate: Decimal, net: Decimal, vat: Decimal });
+export type PurchaseVatLine = z.infer<typeof PurchaseVatLine>;
+
+export const PurchaseInput = z.object({
+  supplierId: Id,
+  // The supplier's own invoice number.
+  number: z.string().min(1).max(60),
+  issueDate: IsoDate,
+  dueDate: IsoDate,
+  category: PurchaseCategory.default("SERVICES"),
+  description: z.string().min(1).max(300),
+  vatLines: z.array(PurchaseVatLine).min(1).max(5),
+  // False when the VAT cannot be recovered (no right to deduct, non-conforming invoice).
+  vatDeductible: z.boolean().default(true),
+  notes: z.string().max(2000).optional(),
+});
+export type PurchaseInput = z.infer<typeof PurchaseInput>;
+
+// A payment to the supplier. What settles the invoice is amount + vatWithheld + taxWithheld:
+// withholdings are paid to the Treasury on the supplier's behalf, they are not a discount.
+export const PurchasePaymentInput = z.object({
+  paidOn: IsoDate,
+  method: PaymentMethod,
+  amount: Decimal,
+  vatWithheld: Decimal.default("0"),
+  taxWithheld: Decimal.default("0"),
+  reference: z.string().max(100).optional(),
+});
+export type PurchasePaymentInput = z.infer<typeof PurchasePaymentInput>;
+
+export const PurchasePayment = PurchasePaymentInput.extend({ id: Id, settled: Decimal });
+export type PurchasePayment = z.infer<typeof PurchasePayment>;
+
+// Non-blocking findings shown to the person approving.
+export const PurchaseWarning = z.enum([
+  "SUPPLIER_ICE_MISSING",
+  "SUPPLIER_IF_MISSING",
+  // Due date later than the longest term the rules allow, counted from the issue date.
+  "TERM_TOO_LONG",
+  // Cash paid to this supplier above the daily or monthly limit for deductibility.
+  "CASH_LIMIT",
+]);
+export type PurchaseWarning = z.infer<typeof PurchaseWarning>;
+
+export const Purchase = PurchaseInput.extend({
+  id: Id,
+  // Frozen when the invoice is approved; live from the supplier record before that.
+  supplier: z.object({ name: z.string(), ice: z.string().nullable(), ifNumber: z.string().nullable() }),
+  currency: z.literal("MAD"),
+  state: PurchaseState,
+  rejectionReason: z.string().nullable(),
+  // In dispute with the supplier: stays unpaid without counting as late.
+  disputed: z.boolean(),
+  totalNet: Decimal,
+  totalVat: Decimal,
+  totalGross: Decimal,
+  paidAmount: Decimal,
+  amountDue: Decimal,
+  paymentStatus: z.enum(["UNPAID", "PARTIAL", "PAID"]),
+  overdue: z.boolean(),
+  payments: z.array(PurchasePayment),
+  warnings: z.array(PurchaseWarning),
+  createdByName: z.string().nullable(),
+  approvedByName: z.string().nullable(),
+  approvedAt: z.string().nullable(),
+});
+export type Purchase = z.infer<typeof Purchase>;
+
+export const PurchaseSummary = Purchase.pick({
+  id: true,
+  number: true,
+  issueDate: true,
+  dueDate: true,
+  category: true,
+  state: true,
+  disputed: true,
+  totalGross: true,
+  amountDue: true,
+  paymentStatus: true,
+  overdue: true,
+}).extend({ supplierId: Id, supplierName: z.string(), warningCount: z.number().int() });
+export type PurchaseSummary = z.infer<typeof PurchaseSummary>;
+
+export const PurchaseList = z.object({
+  items: z.array(PurchaseSummary),
+  total: z.number().int(),
+  // Whole workspace, ignoring the list's filters.
+  overview: z.object({
+    toApprove: z.number().int(),
+    unpaidTotal: Decimal,
+    overdueTotal: Decimal,
+    overdueCount: z.number().int(),
+    dueWithin7Days: Decimal,
+  }),
+});
+export type PurchaseList = z.infer<typeof PurchaseList>;
+
+export const RejectPurchaseInput = z.object({ reason: z.string().min(1).max(500) });
+export type RejectPurchaseInput = z.infer<typeof RejectPurchaseInput>;
+
+export const DisputePurchaseInput = z.object({ disputed: z.boolean() });
+export type DisputePurchaseInput = z.infer<typeof DisputePurchaseInput>;
+
+// Reports. A period is a month "2026-11" or a quarter "2026-Q4".
+export const ReportPeriod = z.string().regex(/^\d{4}-(0[1-9]|1[0-2]|Q[1-4])$/);
+export type ReportPeriod = z.infer<typeof ReportPeriod>;
+
+const BaseVat = z.object({ base: Decimal, vat: Decimal });
+
+// Preparation of the periodic VAT return. A working paper, not the return itself.
+export const VatStatement = z.object({
+  period: ReportPeriod,
+  from: IsoDate,
+  to: IsoDate,
+  basis: VatBasis,
+  // Last day to file and pay online: end of the month after the period.
+  filingDeadline: IsoDate,
+  collected: z.object({
+    byRate: z.array(BaseVat.extend({ vatRate: Decimal })),
+    // Turnover at 0 %.
+    exemptBase: Decimal,
+    totalBase: Decimal,
+    totalVat: Decimal,
+  }),
+  deductible: z.object({
+    services: BaseVat,
+    goods: BaseVat,
+    fixedAssets: BaseVat,
+    totalVat: Decimal,
+  }),
+  // VAT withheld by customers on payments of the period: already paid to the Treasury for the company.
+  withheldByCustomers: Decimal,
+  // Credit carried over from the previous return, as given by the caller.
+  previousCredit: Decimal,
+  // collected - deductible - withheldByCustomers - previousCredit: one of the two is zero.
+  vatDue: Decimal,
+  creditCarriedForward: Decimal,
+  sales: z.array(
+    z.object({
+      invoiceId: Id,
+      number: z.string(),
+      customerName: z.string(),
+      // Payment date on a cash basis, issue date on an accrual basis.
+      date: IsoDate,
+      vatRate: Decimal,
+      base: Decimal,
+      vat: Decimal,
+    }),
+  ),
+  // The "relevé de déductions": one row per purchase payment and VAT rate.
+  deductions: z.array(
+    z.object({
+      purchaseId: Id,
+      number: z.string(),
+      issueDate: IsoDate,
+      supplierName: z.string(),
+      supplierIf: z.string().nullable(),
+      supplierIce: z.string().nullable(),
+      description: z.string(),
+      category: PurchaseCategory,
+      vatRate: Decimal,
+      base: Decimal,
+      vat: Decimal,
+      paidOn: IsoDate,
+      method: PaymentMethod,
+      reference: z.string().nullable(),
+    }),
+  ),
+  // What makes the figures incomplete or worth a second look.
+  notices: z.array(z.enum(["NOT_SUBJECT", "PERIOD_MISMATCH", "PERIOD_NOT_OVER", "PURCHASES_TO_APPROVE", "CASH_LIMIT"])),
+});
+export type VatStatement = z.infer<typeof VatStatement>;
+
+const WithholdingRow = z.object({
+  paymentId: Id,
+  documentId: Id,
+  number: z.string(),
+  partyName: z.string(),
+  partyIf: z.string().nullable(),
+  partyIce: z.string().nullable(),
+  paidOn: IsoDate,
+  // Amounts of the document the payment relates to.
+  totalNet: Decimal,
+  totalVat: Decimal,
+  vatWithheld: Decimal,
+  taxWithheld: Decimal,
+});
+
+export const WithholdingStatement = z.object({
+  period: ReportPeriod,
+  from: IsoDate,
+  to: IsoDate,
+  // Withheld from suppliers on payments of the period: to pay to the Treasury.
+  onSuppliers: z.object({
+    rows: z.array(WithholdingRow),
+    totalVat: Decimal,
+    totalTax: Decimal,
+    // End of the month after the period's last month.
+    remittanceDeadline: IsoDate,
+  }),
+  // Withheld by customers: credits to claim on the company's own returns.
+  byCustomers: z.object({ rows: z.array(WithholdingRow), totalVat: Decimal, totalTax: Decimal }),
+});
+export type WithholdingStatement = z.infer<typeof WithholdingStatement>;
+
+// Late payments to suppliers (law 69-21): preparation of the quarterly declaration.
+export const PaymentTermsStatement = z.object({
+  period: ReportPeriod,
+  from: IsoDate,
+  to: IsoDate,
+  filingDeadline: IsoDate,
+  // The central bank key rates used, as dated data from the rule package or the caller's override.
+  keyRates: z.array(z.object({ from: IsoDate, rate: Decimal })),
+  monthlyIncrement: Decimal,
+  rows: z.array(
+    z.object({
+      purchaseId: Id,
+      number: z.string(),
+      issueDate: IsoDate,
+      supplierName: z.string(),
+      supplierIf: z.string().nullable(),
+      supplierIce: z.string().nullable(),
+      totalGross: Decimal,
+      // Latest date the law allows: the agreed due date, capped at the legal maximum from the issue date.
+      legalDueDate: IsoDate,
+      // The part settled after legalDueDate or still unpaid at the end of the period.
+      lateAmount: Decimal,
+      // Null while still unpaid at the end of the period.
+      settledOn: IsoDate.nullable(),
+      // Months of delay started, counted to settledOn or to the end of the period.
+      monthsLate: z.number().int(),
+      ratePercent: Decimal,
+      fine: Decimal,
+      status: z.enum(["PAID_LATE", "UNPAID"]),
+      method: PaymentMethod.nullable(),
+      reference: z.string().nullable(),
+    }),
+  ),
+  // Left out of the fine: invoices in dispute.
+  disputed: z.array(z.object({ purchaseId: Id, number: z.string(), supplierName: z.string(), amountDue: Decimal })),
+  totals: z.object({ unpaidLate: Decimal, paidLate: Decimal, fine: Decimal, count: z.number().int() }),
+  notices: z.array(z.enum(["PERIOD_NOT_QUARTER", "PERIOD_NOT_OVER", "PURCHASES_TO_APPROVE", "KEY_RATE_OVERRIDDEN"])),
+});
+export type PaymentTermsStatement = z.infer<typeof PaymentTermsStatement>;

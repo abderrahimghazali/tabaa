@@ -7,6 +7,7 @@ import type { Role } from "@facture/core";
 export type Capability =
   | "write" // create, edit, issue invoices; record payments; customers and items
   | "send" // send invoices by email
+  | "bank" // import statements, match and ignore bank lines (unmatching and deleting imports need "admin")
   | "admin" // void payments, delete records, company settings
   | "auditLog" // activity log
   | "export" // data export
@@ -16,6 +17,7 @@ export type Capability =
 const MATRIX: Record<Capability, readonly Role[]> = {
   write: ["OWNER", "ADMIN", "MEMBER"],
   send: ["OWNER", "ADMIN", "MEMBER"],
+  bank: ["OWNER", "ADMIN", "MEMBER"],
   admin: ["OWNER", "ADMIN"],
   auditLog: ["OWNER", "ADMIN", "ACCOUNTANT"],
   export: ["OWNER", "ACCOUNTANT"],
@@ -28,7 +30,7 @@ export const ROLES: readonly Role[] = ["OWNER", "ADMIN", "MEMBER", "ACCOUNTANT",
 export const can = (role: Role | null | undefined, capability: Capability) => !!role && MATRIX[capability].includes(role);
 
 /** Rows of the table in the order the Équipe tab shows them. */
-export const CAPABILITY_ROWS: readonly (Capability | "read")[] = ["read", "write", "send", "admin", "auditLog", "export", "team", "close"];
+export const CAPABILITY_ROWS: readonly (Capability | "read")[] = ["read", "write", "send", "bank", "admin", "auditLog", "export", "team", "close"];
 
 export const roleHas = (role: Role, row: Capability | "read") => row === "read" || can(role, row);
 
